@@ -1,33 +1,37 @@
-import os
 import boto3
 from dotenv import load_dotenv
-from boto3.resources.base import ServiceResource
-from botocore.exceptions import ClientError, EndpointConnectionError
+import os
 
-def get_dynamodb_reasources() -> ServiceResource:
-    dynamodb = boto3.resource(
-        'dynamodb',
-        aws_access_key_id=os.getenv("AWS_ACCESS_KEY_ID"),
-        aws_secret_access_key=os.getenv("AWS_SECRET_ACCESS_KEY"),
-        region_name=os.getenv("AWS_DEFAULT_REGION"))
+load_dotenv()
 
-    if not dynamodb:
-        raise ValueError("Can't connect to Database")
-    return dynamodb
+def get_dynamodb_reasources():
+    region = os.getenv('AWS_DEFAULT_REGION')
 
-def test_connection(dynamodb: ServiceResource) -> bool:
+    if not region:
+        raise ValueError(
+            "AWS_DEFAULT_REGION not found in environment variables! "
+            "Make sure .env file exists and contains the correct reigon"
+        )
+    return boto3.resource('dynamodb', region_name=region)
+
+def test_dynamodb_connection():
     try:
-        print(list(dynamodb.tables.all()), "\nConnection succes")
+        dynamodb = get_dynamodb_reasources()
+        client = dynamodb.meta.client
+        response = client.list_tables()
+
+        print(f"Tables found: {len(response['TableNames'])}")
+        if response['TableNames']:
+            print("\nYour tables:")
+            for table_name in response['TableNames']:
+                print(f"  - {table_name}")
+        else:
+            print("No tables found")
         return True
-    except EndpointConnectionError:
-        print("Connection Error")
-    except ClientError as e:
-        print(f"AWS : {e.response['Error']['Message']}")
+
     except Exception as e:
         print(f"Error: {e}")
-    return False
+        return False
 
-if __name__ == '__main__':
-    load_dotenv()
-    db = get_dynamodb_reasources()
-    test_connection(db)
+if __name__ == "__main__":
+    test_dynamodb_connection()
