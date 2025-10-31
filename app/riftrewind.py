@@ -33,34 +33,35 @@ def main():
 
     while True:
         try:
-            user_input = input("> ").strip().lower()
+            user_input = input("> ").strip()
             if not user_input:
                 continue
 
-            # Parse command and arguments
+            # Parse command and arguments (keep original case for args)
             parts = user_input.split()
-            command = parts[0]
+            command = parts[0].lower()  # Normalize command to lowercase
             args = parts[1:] if len(parts) > 1 else []
 
-            # Route commands
-            if command == "help":
-                print_help()
-            elif command == "version":
-                print(f"RiftRewind CLI v{VERSION}")
-            elif command == "chat":
-                if args:
-                    run_chat(args[0])
-                else:
-                    print("Usage: chat <session_token>")
-                    print("Example: chat a1b2c3d4-e5f6-g7h8-i9j0-k1l2m3n4o5p6")
-            elif command == "sync":
-                run_sync()
-            elif command in ["exit", "quit", "q"]:
-                print("\nGoodbye!")
-                break
-            else:
-                print(f"Unknown command: {command}")
-                print("Type 'help' for available commands")
+            # Route commands using match/case
+            match command:
+                case "help":
+                    print_help()
+                case "version":
+                    print(f"RiftRewind CLI v{VERSION}")
+                case "chat":
+                    if args:
+                        run_chat(args[0])
+                    else:
+                        print("Usage: chat <session_token>")
+                        print("Example: chat a1b2c3d4-e5f6-g7h8-i9j0-k1l2m3n4o5p6")
+                case "sync":
+                    run_sync()
+                case "exit" | "quit" | "q" | "bye" | "kill":
+                    print("\nGoodbye!")
+                    break
+                case _:
+                    print(f"Unknown command: {command}")
+                    print("Type 'help' for available commands")
         except KeyboardInterrupt:
             print("\n\nUse 'exit' to quit")
         except Exception as e:
