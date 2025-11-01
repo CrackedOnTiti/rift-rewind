@@ -1,15 +1,16 @@
 from ..utils.helpers import detect_role
 from .role_metrics import extract_role_metrics
-from .map_utils import is_near_objective
+from .map_utils import is_near_objective, OBJECTIVE_PROXIMITY_THRESHOLD
+from .laning_phase import analyze_wave_management, analyze_trading_efficiency
+from .location_pipeline import aggregate_location_data
 
 
-def extract_match_stats(match, puuid):
+def find_participant_data(match, puuid):
+    # récup participant, team, role et adversaire
     my_participant = None
     my_team_id = None
     my_role = None
     opponent_champion = None
-    team_kills = 0
-    team_damage = 0
 
     for participant in match["info"]["participants"]:
         if participant["puuid"] == puuid:
@@ -17,38 +18,96 @@ def extract_match_stats(match, puuid):
             my_team_id = participant["teamId"]
             my_role = detect_role(participant)
 
-        if my_team_id and participant["teamId"] == my_team_id:
-            team_kills += participant["kills"]
-            team_damage += participant["totalDamageDealtToChampions"]
-
         if my_role and my_team_id:
             is_enemy = participant["teamId"] != my_team_id
             if is_enemy and detect_role(participant) == my_role:
                 opponent_champion = participant["championName"]
 
+    return my_participant, my_team_id, my_role, opponent_champion
+
+
+def calculate_team_stats(participants, team_id):
+    # kills et dégâts totaux de la team
+    team_kills = 0
+    team_damage = 0
+
+    for participant in participants:
+        if participant["teamId"] == team_id:
+            team_kills += participant["kills"]
+            team_damage += participant["totalDamageDealtToChampions"]
+
+    return team_kills, team_damage
+
+
+def extract_rune_data(participant):
+    # extraction des runes
+    perks = participant.get("perks")
+    if not perks:
+        return {
+            "primary_rune_style": 0,
+            "sub_rune_style": 0,
+            "primary_rune_selections": [],
+            "sub_rune_selections": []
+        }
+
+    styles = perks.get("styles", [])
+    if not styles:
+        return {
+            "primary_rune_style": 0,
+            "sub_rune_style": 0,
+            "primary_rune_selections": [],
+            "sub_rune_selections": []
+        }
+
+    primary_style = styles[0] if len(styles) > 0 else {}
+    sub_style = styles[1] if len(styles) > 1 else {}
+
+    return {
+        "primary_rune_style": primary_style.get("style", 0),
+        "sub_rune_style": sub_style.get("style", 0),
+        "primary_rune_selections": [s.get("perk", 0) for s in primary_style.get("selections", [])],
+        "sub_rune_selections": [s.get("perk", 0) for s in sub_style.get("selections", [])]
+    }
+
+
+def calculate_kill_participation(participant, team_kills, challenges):
+    # participation aux kills
+    kill_participation = challenges.get("killParticipation", 0)
+    if kill_participation == 0 and team_kills > 0:
+        player_kills = participant["kills"]
+        player_assists = participant["assists"]
+        kill_participation = (player_kills + player_assists) / team_kills
+    return kill_participation
+
+
+def calculate_damage_share(participant, team_damage, challenges):
+    # part des dégâts de la team
+    damage_share = challenges.get("teamDamagePercentage", 0)
+    if damage_share == 0 and team_damage > 0:
+        player_damage = participant["totalDamageDealtToChampions"]
+        damage_share = player_damage / team_damage
+    return damage_share
+
+
+def extract_match_stats(match, puuid):
+    # extraction stats joueur d'un match
+    my_participant, my_team_id, my_role, opponent_champion = find_participant_data(match, puuid)
+
     if not my_participant:
         return None
 
+    team_kills, team_damage = calculate_team_stats(match["info"]["participants"], my_team_id)
     challenges = my_participant.get("challenges", {})
 
-    kill_participation = challenges.get("killParticipation", 0)
-    if kill_participation == 0 and team_kills > 0:
-        player_kills = my_participant["kills"]
-        player_assists = my_participant["assists"]
-        kill_participation = (player_kills + player_assists) / team_kills
-
-    damage_share = challenges.get("teamDamagePercentage", 0)
-    if damage_share == 0 and team_damage > 0:
-        player_damage = my_participant["totalDamageDealtToChampions"]
-        damage_share = player_damage / team_damage
+    kill_participation = calculate_kill_participation(my_participant, team_kills, challenges)
+    damage_share = calculate_damage_share(my_participant, team_damage, challenges)
 
     game_duration_minutes = match["info"]["gameDuration"] / 60
-    total_cs = (
-        my_participant["totalMinionsKilled"] +
-        my_participant["neutralMinionsKilled"]
-    )
+    total_cs = my_participant["totalMinionsKilled"] + my_participant["neutralMinionsKilled"]
     player_damage = my_participant["totalDamageDealtToChampions"]
     player_vision = my_participant["visionScore"]
+
+    rune_data = extract_rune_data(my_participant)
 
     stats = {
         "match_id": match["metadata"]["matchId"],
@@ -119,10 +178,7 @@ def extract_match_stats(match, puuid):
         "summoner2_id": my_participant.get("summoner2Id", 0),
         "summoner1_casts": my_participant.get("summoner1Casts", 0),
         "summoner2_casts": my_participant.get("summoner2Casts", 0),
-        "primary_rune_style": my_participant.get("perks", {}).get("styles", [{}])[0].get("style", 0) if my_participant.get("perks") else 0,
-        "sub_rune_style": my_participant.get("perks", {}).get("styles", [{}])[1].get("style", 0) if len(my_participant.get("perks", {}).get("styles", [])) > 1 else 0,
-        "primary_rune_selections": [s.get("perk", 0) for s in my_participant.get("perks", {}).get("styles", [{}])[0].get("selections", [])] if my_participant.get("perks") else [],
-        "sub_rune_selections": [s.get("perk", 0) for s in my_participant.get("perks", {}).get("styles", [{}])[1].get("selections", [])] if len(my_participant.get("perks", {}).get("styles", [])) > 1 else [],
+        **rune_data,
         "item0": my_participant.get("item0", 0),
         "item1": my_participant.get("item1", 0),
         "item2": my_participant.get("item2", 0),
@@ -171,7 +227,7 @@ def extract_match_stats(match, puuid):
     return stats
 
 
-def _extract_cs_and_gold_milestones(frames, participant_id, opponent_id):
+def extract_cs_and_gold_milestones(frames, participant_id, opponent_id):
     milestones = {
         "cs_at_10": 0,
         "gold_at_10": 0,
@@ -251,7 +307,7 @@ def _extract_cs_and_gold_milestones(frames, participant_id, opponent_id):
     return milestones
 
 
-def _extract_death_events(frames, participant_id):
+def extract_death_events(frames, participant_id):
     death_events = []
 
     for frame in frames:
@@ -268,7 +324,7 @@ def _extract_death_events(frames, participant_id):
 
                 objective_proximity = None
                 if death_x > 0 and death_y > 0:
-                    objective_proximity = is_near_objective(death_x, death_y, threshold=3000)
+                    objective_proximity = is_near_objective(death_x, death_y, threshold=OBJECTIVE_PROXIMITY_THRESHOLD)
 
                 death_events.append({
                     "timestamp": timestamp_minutes,
@@ -284,7 +340,7 @@ def _extract_death_events(frames, participant_id):
     return death_events
 
 
-def _calculate_death_metrics(death_events):
+def calculate_death_metrics(death_events):
     deaths_0_10 = sum(1 for d in death_events if d["timestamp"] <= 10)
     deaths_10_20 = sum(1 for d in death_events if 10 < d["timestamp"] <= 20)
     deaths_20_30 = sum(1 for d in death_events if 20 < d["timestamp"] <= 30)
@@ -319,7 +375,7 @@ def _calculate_death_metrics(death_events):
     }
 
 
-def _extract_item_completions(frames, participant_id):
+def extract_item_completions(frames, participant_id):
     item_completions = []
 
     for frame in frames:
@@ -341,7 +397,7 @@ def _extract_item_completions(frames, participant_id):
     return item_completions
 
 
-def _extract_objectives_and_turrets(frames, participant_id, team_id):
+def extract_objectives_and_turrets(frames, participant_id, team_id):
     objective_events = []
     turret_events = []
 
@@ -378,7 +434,7 @@ def _extract_objectives_and_turrets(frames, participant_id, team_id):
     return objective_events, turret_events
 
 
-def _calculate_objective_throws(objective_events, death_events):
+def calculate_objective_throws(objective_events, death_events):
     objective_throws = []
 
     for obj_event in objective_events:
@@ -424,12 +480,12 @@ def extract_timeline_stats(match, timeline, puuid, role=None):
 
     frames = timeline["info"]["frames"]
 
-    milestones = _extract_cs_and_gold_milestones(frames, participant_id, opponent_id)
-    death_events = _extract_death_events(frames, participant_id)
-    death_metrics = _calculate_death_metrics(death_events)
-    item_completions = _extract_item_completions(frames, participant_id)
-    objective_events, turret_events = _extract_objectives_and_turrets(frames, participant_id, team_id)
-    objective_throws = _calculate_objective_throws(objective_events, death_events)
+    milestones = extract_cs_and_gold_milestones(frames, participant_id, opponent_id)
+    death_events = extract_death_events(frames, participant_id)
+    death_metrics = calculate_death_metrics(death_events)
+    item_completions = extract_item_completions(frames, participant_id)
+    objective_events, turret_events = extract_objectives_and_turrets(frames, participant_id, team_id)
+    objective_throws = calculate_objective_throws(objective_events, death_events)
 
     team_side = 'blue' if team_id == 100 else 'red'
     role_specific_stats = extract_role_metrics(
@@ -438,6 +494,33 @@ def extract_timeline_stats(match, timeline, puuid, role=None):
         participant_id=participant_id,
         role=my_role,
         team_side=team_side
+    )
+
+    wave_management = {}
+    trading_analysis = {}
+    if my_role and my_role != "JUNGLE":
+        wave_management = analyze_wave_management(
+            match_data=match,
+            timeline_data=timeline,
+            participant_id=participant_id,
+            role=my_role,
+            team_side=team_side,
+            opponent_id=opponent_id,
+            laning_end_time=14
+        )
+
+        trading_analysis = analyze_trading_efficiency(
+            match_data=match,
+            timeline_data=timeline,
+            participant_id=participant_id,
+            opponent_id=opponent_id,
+            laning_end_time=14
+        )
+
+    location_data = aggregate_location_data(
+        match_data=match,
+        timeline_data=timeline,
+        participant_id=participant_id
     )
 
     timeline_stats = {
@@ -449,6 +532,9 @@ def extract_timeline_stats(match, timeline, puuid, role=None):
         "objective_throws": objective_throws,
         "objective_throws_count": len(objective_throws),
         "role_specific_stats": role_specific_stats,
+        "wave_management": wave_management,
+        "trading_analysis": trading_analysis,
+        "location_data": location_data,
         **death_metrics,
     }
 

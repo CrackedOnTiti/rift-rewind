@@ -3,30 +3,25 @@ class ChampionMastery:
     def __init__(self, core):
         self.core = core
 
-    def get_all_masteries(self, puuid, platform="euw1"):
+    async def get_all_masteries(self, puuid, platform):
         try:
-            return self.core.watcher.champion_mastery.by_puuid(platform, puuid)
+            masteries = await self.core.client.get_lol_champion_v4_masteries_by_puuid(
+                region=platform,
+                puuid=puuid
+            )
+            return masteries
         except Exception as e:
             print(f"Error fetching all masteries: {e}")
             return None
 
 
-    def get_top_masteries(self, puuid, platform="euw1", count=10):
+    async def get_top_masteries(self, puuid, platform, count=10):
         try:
-            all_masteries = self.core.watcher.champion_mastery.by_puuid(
-                platform,
-                puuid
+            top_masteries = await self.core.client.get_lol_champion_v4_top_masteries_by_puuid(
+                region=platform,
+                puuid=puuid
             )
-
-            if all_masteries:
-                sorted_masteries = sorted(
-                    all_masteries,
-                    key=lambda x: x['championPoints'],
-                    reverse=True
-                )
-                return sorted_masteries[:count]
-
-            return None
+            return top_masteries[:count] if top_masteries else []
         except Exception as e:
             print(f"Error fetching top masteries: {e}")
             return None

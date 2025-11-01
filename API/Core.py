@@ -1,5 +1,5 @@
 import aiohttp, asyncio
-from riotwatcher import LolWatcher
+from pulsefire.clients import RiotAPIClient
 
 class Core:
 
@@ -10,15 +10,24 @@ class Core:
         "sea": "https://sea.api.riotgames.com",
     }
 
-    def __init__(self, api_key_path="donotpush/riot_api_key.txt", shared_watcher=None):
-        self.api_key = self._load_api_key(api_key_path)
-        self.watcher = shared_watcher if shared_watcher else LolWatcher(self.api_key)
+    def __init__(self, api_key_path="donotpush/riot_api_key.txt"):
+        self.api_key = self.load_api_key(api_key_path)
+        self.client = RiotAPIClient(default_headers={"X-Riot-Token": self.api_key})
 
-    def _load_api_key(self, path):
+    def load_api_key(self, path):
         with open(path, "r") as f:
             return f.read().strip()
 
-    async def _make_request(self, url, params=None, retries=3):
+    async def __aenter__(self):
+        await self.client.__aenter__()
+        return self
+
+    async def __aexit__(self, exc_type, exc_val, exc_tb):
+        await self.client.__aexit__(exc_type, exc_val, exc_tb)
+        await asyncio.sleep(0.1)  # petite pause pour fermer les connexions
+        return False
+
+    async def make_request(self, url, params=None, retries=3):
         headers = {"X-Riot-Token": self.api_key}
         timeout = aiohttp.ClientTimeout(total=10)
 
@@ -32,13 +41,13 @@ class Core:
                         retry_after = int(response.headers.get("Retry-After", 1))
                         print(f"[429] Rate limit hit, waiting {retry_after}s...")
                         await asyncio.sleep(retry_after)
-                        return await self._make_request(url, params, retries)
+                        return await self.make_request(url, params, retries)
 
                     elif response.status in {500, 502, 503, 504}:
                         if retries > 0:
                             print(f"[{response.status}] Server error, retrying... ({retries} left)")
                             await asyncio.sleep(2)
-                            return await self._make_request(url, params, retries - 1)
+                            return await self.make_request(url, params, retries - 1)
                         else:
                             print(f"[{response.status}] Server error, no retries left.")
                             return None
@@ -54,7 +63,7 @@ class Core:
         except asyncio.TimeoutError:
             if retries > 0:
                 print("[TIMEOUT] Retrying request...")
-                return await self._make_request(url, params, retries - 1)
+                return await self.make_request(url, params, retries - 1)
             else:
                 print("[TIMEOUT] Request failed after multiple retries.")
                 return None
@@ -67,5 +76,5 @@ class Core:
             print(f"[UNEXPECTED ERROR] {type(e).__name__}: {e}")
             return None
 
-    def _build_region_url(self, region, path):
+    def build_region_url(self, region, path):
         return f"{self.REGION_URLS[region]}{path}"

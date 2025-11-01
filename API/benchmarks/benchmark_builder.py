@@ -1,4 +1,4 @@
-import time
+import asyncio
 import json
 from datetime import datetime
 from ..Core import Core
@@ -15,10 +15,10 @@ class BenchmarkBuilder:
         self.rank_api = Rank(self.core)
         self.match_api = Match(self.core)
 
-    def build_benchmarks(
+    async def build_benchmarks(
         self,
-        region="europe",
-        platform="euw1",
+        region,
+        platform,
         matches_per_rank=100,
         output_file="API/benchmarks/benchmark_cache.json",
     ):
@@ -46,7 +46,7 @@ class BenchmarkBuilder:
         for rank in rank_tiers:
             print(f"\n[{rank}] Fetching matches...")
 
-            players = self._get_players_from_rank(rank, platform, limit=20)
+            players = await self.get_players_from_rank(rank, platform, limit=20)
 
             if not players:
                 print(f"  ⚠ No players found for {rank}, skipping...")
@@ -56,7 +56,7 @@ class BenchmarkBuilder:
 
             match_ids = set()
             for i, player_puuid in enumerate(players):
-                player_matches = self.match_api.get_match_history(
+                player_matches = await self.match_api.get_match_history(
                     player_puuid, region, count=10
                 )
                 if player_matches:
@@ -69,12 +69,12 @@ class BenchmarkBuilder:
                     print(
                         f"    Progress: {i + 1}/{len(players)} players, {len(match_ids)} matches"
                     )
-                    time.sleep(0.5)
+                    await asyncio.sleep(0.5)
 
             print(f"  Analyzing {len(match_ids)} matches...")
 
             for idx, match_id in enumerate(list(match_ids)[:matches_per_rank]):
-                match_data = self.match_api.get_match_details(match_id, region)
+                match_data = await self.match_api.get_match_details(match_id, region)
                 if not match_data:
                     continue
 
@@ -110,13 +110,13 @@ class BenchmarkBuilder:
                     print(
                         f"    Processed: {idx + 1}/{min(len(match_ids), matches_per_rank)}"
                     )
-                    time.sleep(0.2)
+                    await asyncio.sleep(0.2)
 
         print(f"\n{'=' * 60}")
         print(f"  Calculating Benchmark Averages")
         print(f"{'=' * 60}\n")
 
-        benchmarks = self._calculate_averages(raw_data)
+        benchmarks = self.calculate_averages(raw_data)
 
         cache_data = {
             "generated_at": datetime.now().isoformat(),
@@ -134,26 +134,34 @@ class BenchmarkBuilder:
 
         return benchmarks
 
-    def _get_players_from_rank(self, rank, platform, limit=20):
+    async def get_players_from_rank(self, rank, platform, limit=20):
         try:
             queue = "RANKED_SOLO_5x5"
             tier = rank
             division = "I"
 
             if rank in ["MASTER", "GRANDMASTER", "CHALLENGER"]:
-                entries = self.core.watcher.league.entries(
-                    platform, queue, tier, page=1
+                entries = await self.core.client.get_lol_league_v4_entries_by_division(
+                    region=platform,
+                    queue=queue,
+                    tier=tier,
+                    division="I",
+                    queries={"page": 1}
                 )
             else:
-                entries = self.core.watcher.league.entries(
-                    platform, queue, tier, division, page=1
+                entries = await self.core.client.get_lol_league_v4_entries_by_division(
+                    region=platform,
+                    queue=queue,
+                    tier=tier,
+                    division=division,
+                    queries={"page": 1}
                 )
 
             puuids = []
             for entry in entries[:limit]:
                 summoner_id = entry.get("summonerId")
                 if summoner_id:
-                    summoner_data = self.summoner_api.get_summoner_by_id(
+                    summoner_data = await self.summoner_api.get_summoner_by_id(
                         summoner_id, platform
                     )
                     if summoner_data:
@@ -162,7 +170,7 @@ class BenchmarkBuilder:
                 if len(puuids) >= limit:
                     break
 
-                time.sleep(0.1)
+                await asyncio.sleep(0.1)
 
             return puuids
 
@@ -170,7 +178,7 @@ class BenchmarkBuilder:
             print(f"  Error fetching players: {e}")
             return []
 
-    def _calculate_averages(self, raw_data):
+    def calculate_averages(self, raw_data):
         benchmarks = {}
 
         for rank, roles in raw_data.items():

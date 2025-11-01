@@ -1,8 +1,9 @@
 from datetime import datetime
 from .role_metrics import aggregate_role_metrics
+from .laning_phase import aggregate_trading_stats, aggregate_wave_management_stats
 
 
-def _calculate_basic_stats(processed_stats):
+def calculate_basic_stats(processed_stats):
     total_games = len(processed_stats)
     wins = sum(1 for s in processed_stats if s["win"])
 
@@ -24,7 +25,7 @@ def _calculate_basic_stats(processed_stats):
     }
 
 
-def _calculate_farming_stats(processed_stats):
+def calculate_farming_stats(processed_stats):
     total_games = len(processed_stats)
 
     return {
@@ -37,7 +38,7 @@ def _calculate_farming_stats(processed_stats):
     }
 
 
-def _calculate_vision_stats(processed_stats):
+def calculate_vision_stats(processed_stats):
     total_games = len(processed_stats)
 
     return {
@@ -53,7 +54,7 @@ def _calculate_vision_stats(processed_stats):
     }
 
 
-def _calculate_damage_stats(processed_stats):
+def calculate_damage_stats(processed_stats):
     total_games = len(processed_stats)
 
     return {
@@ -66,7 +67,7 @@ def _calculate_damage_stats(processed_stats):
     }
 
 
-def _calculate_early_game_stats(processed_stats):
+def calculate_early_game_stats(processed_stats):
     stats_with_cs10 = [s for s in processed_stats if "cs_at_10" in s and s["cs_at_10"] > 0]
     stats_with_gold_diff = [s for s in processed_stats if "gold_diff_at_15" in s and s["gold_diff_at_15"] != 0]
 
@@ -97,7 +98,7 @@ def _calculate_early_game_stats(processed_stats):
     return early_game
 
 
-def _calculate_champion_performance(processed_stats):
+def calculate_champion_performance(processed_stats):
     champion_stats = {}
     for stat in processed_stats:
         champ_id = stat["champion_id"]
@@ -131,7 +132,7 @@ def _calculate_champion_performance(processed_stats):
     return champion_performance
 
 
-def _calculate_role_distribution(processed_stats):
+def calculate_role_distribution(processed_stats):
     role_counts = {}
     for stat in processed_stats:
         role = stat["role"]
@@ -141,7 +142,7 @@ def _calculate_role_distribution(processed_stats):
     return role_counts, primary_role
 
 
-def _calculate_monthly_trends(processed_stats):
+def calculate_monthly_trends(processed_stats):
     monthly_performance = {}
 
     for stat in processed_stats:
@@ -168,7 +169,7 @@ def _calculate_monthly_trends(processed_stats):
     return dict(sorted(monthly_performance.items()))
 
 
-def _calculate_lane_dominance_stats(processed_stats):
+def calculate_lane_dominance_stats(processed_stats):
     total_games = len(processed_stats)
 
     return {
@@ -187,7 +188,7 @@ def _calculate_lane_dominance_stats(processed_stats):
     }
 
 
-def _calculate_utility_stats(processed_stats):
+def calculate_utility_stats(processed_stats):
     total_games = len(processed_stats)
 
     return {
@@ -212,7 +213,7 @@ def _calculate_utility_stats(processed_stats):
     }
 
 
-def _calculate_economic_stats(processed_stats):
+def calculate_economic_stats(processed_stats):
     total_games = len(processed_stats)
 
     return {
@@ -228,7 +229,7 @@ def _calculate_economic_stats(processed_stats):
     }
 
 
-def _calculate_objective_stats(processed_stats):
+def calculate_objective_stats(processed_stats):
     total_games = len(processed_stats)
 
     return {
@@ -247,7 +248,7 @@ def _calculate_objective_stats(processed_stats):
     }
 
 
-def _calculate_summoner_spell_stats(processed_stats):
+def calculate_summoner_spell_stats(processed_stats):
     total_games = len(processed_stats)
 
     return {
@@ -260,7 +261,7 @@ def _calculate_summoner_spell_stats(processed_stats):
     }
 
 
-def _calculate_macro_stats(processed_stats):
+def calculate_macro_stats(processed_stats):
     stats_with_timeline = [s for s in processed_stats if "death_events" in s]
     total_games = len(processed_stats)
 
@@ -334,7 +335,7 @@ def _calculate_macro_stats(processed_stats):
     }
 
 
-def _calculate_enhanced_early_game_stats(processed_stats):
+def calculate_enhanced_early_game_stats(processed_stats):
     stats_with_cs10 = [s for s in processed_stats if "cs_at_10" in s and s["cs_at_10"] > 0]
     stats_with_xp_diff = [s for s in processed_stats if "xp_diff_at_15" in s and s.get("xp_diff_at_15") is not None]
 
@@ -366,7 +367,7 @@ def _calculate_enhanced_early_game_stats(processed_stats):
     return early_game
 
 
-def _get_role_performance(processed_stats, role_counts):
+def get_role_performance(processed_stats, role_counts):
     role_performance = {}
     for role, count in role_counts.items():
         if count >= 3:
@@ -385,7 +386,7 @@ def _get_role_performance(processed_stats, role_counts):
     return role_performance
 
 
-def _calculate_contextual_performance(processed_stats):
+def calculate_contextual_performance(processed_stats):
     stats_with_gold_diff = [
         s for s in processed_stats
         if "gold_diff_at_15" in s and s.get("gold_diff_at_15") is not None
@@ -433,25 +434,25 @@ def aggregate_stats(processed_stats, puuid, game_name, tag_line, summoner_info, 
     if not processed_stats:
         return {}
 
-    role_counts, primary_role = _calculate_role_distribution(processed_stats)
+    role_counts, primary_role = calculate_role_distribution(processed_stats)
     rank_string = get_rank_string(rank_info)
 
-    basic_stats = _calculate_basic_stats(processed_stats)
-    farming_stats = _calculate_farming_stats(processed_stats)
-    vision_stats = _calculate_vision_stats(processed_stats)
-    damage_stats = _calculate_damage_stats(processed_stats)
-    early_game_stats = _calculate_early_game_stats(processed_stats)
-    enhanced_early_game_stats = _calculate_enhanced_early_game_stats(processed_stats)
-    lane_dominance_stats = _calculate_lane_dominance_stats(processed_stats)
-    utility_stats = _calculate_utility_stats(processed_stats)
-    economic_stats = _calculate_economic_stats(processed_stats)
-    objective_stats = _calculate_objective_stats(processed_stats)
-    summoner_spell_stats = _calculate_summoner_spell_stats(processed_stats)
-    macro_stats = _calculate_macro_stats(processed_stats)
-    champion_performance = _calculate_champion_performance(processed_stats)
-    monthly_trends = _calculate_monthly_trends(processed_stats)
-    role_performance = _get_role_performance(processed_stats, role_counts)
-    contextual_performance = _calculate_contextual_performance(processed_stats)
+    basic_stats = calculate_basic_stats(processed_stats)
+    farming_stats = calculate_farming_stats(processed_stats)
+    vision_stats = calculate_vision_stats(processed_stats)
+    damage_stats = calculate_damage_stats(processed_stats)
+    early_game_stats = calculate_early_game_stats(processed_stats)
+    enhanced_early_game_stats = calculate_enhanced_early_game_stats(processed_stats)
+    lane_dominance_stats = calculate_lane_dominance_stats(processed_stats)
+    utility_stats = calculate_utility_stats(processed_stats)
+    economic_stats = calculate_economic_stats(processed_stats)
+    objective_stats = calculate_objective_stats(processed_stats)
+    summoner_spell_stats = calculate_summoner_spell_stats(processed_stats)
+    macro_stats = calculate_macro_stats(processed_stats)
+    champion_performance = calculate_champion_performance(processed_stats)
+    monthly_trends = calculate_monthly_trends(processed_stats)
+    role_performance = get_role_performance(processed_stats, role_counts)
+    contextual_performance = calculate_contextual_performance(processed_stats)
 
     role_specific_analytics = {}
     for role in role_counts.keys():
@@ -459,6 +460,9 @@ def aggregate_stats(processed_stats, puuid, game_name, tag_line, summoner_info, 
             role_metrics = aggregate_role_metrics(processed_stats, role)
             if role_metrics:
                 role_specific_analytics[role] = role_metrics
+
+    trading_stats = aggregate_trading_stats(processed_stats)
+    wave_management_stats = aggregate_wave_management_stats(processed_stats, role=primary_role)
 
     aggregated = {
         "player_info": {
@@ -485,6 +489,10 @@ def aggregate_stats(processed_stats, puuid, game_name, tag_line, summoner_info, 
         "summoner_spells": summoner_spell_stats,
         "death_analysis": macro_stats.get("death_analysis", {}),
         "tower_participation": macro_stats.get("tower_participation", {}),
+        "laning_phase": {
+            "trading": trading_stats,
+            "wave_management": wave_management_stats,
+        },
         "champion_performance": champion_performance[:10],
         "monthly_trends": monthly_trends,
         "role_performance": role_performance,

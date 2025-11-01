@@ -3,12 +3,25 @@ class Rank:
     def __init__(self, core):
         self.core = core
 
-    def get_rank_info(self, identifier, platform="euw1", by_puuid=True):
+    async def get_rank_info(self, identifier, platform, by_puuid=True):
         try:
             if by_puuid:
-                return self.core.watcher.league.by_puuid(platform, identifier)
+                summoner = await self.core.client.get_lol_summoner_v4_by_puuid(
+                    region=platform,
+                    puuid=identifier
+                )
+                if summoner:
+                    summoner_id = summoner["id"]
+                    return await self.core.client.get_lol_league_v4_entries_by_summoner(
+                        region=platform,
+                        encrypted_summoner_id=summoner_id
+                    )
             else:
-                return self.core.watcher.league.by_summoner(platform, identifier)
+                return await self.core.client.get_lol_league_v4_entries_by_summoner(
+                    region=platform,
+                    encrypted_summoner_id=identifier
+                )
+            return None
         except Exception as e:
             print(f"Error fetching rank info: {e}")
             return None

@@ -7,16 +7,27 @@ from ..league.mastery import ChampionMastery
 from ..analytics.stats_extractor import extract_match_stats, extract_timeline_stats
 from ..analytics.stats_aggregator import aggregate_stats, get_role_specific_stats
 from ..benchmarks.benchmark_loader import get_benchmark, calculate_percentile
+from ..utils.region_helper import get_region_config, get_region_from_platform
 import json
 
 
 class Player:
 
-    def __init__(self, game_name, tag_line, region="europe", platform="euw1"):
+    def __init__(self, game_name, tag_line, platform=None, region=None):
         self.game_name = game_name
         self.tag_line = tag_line
-        self.region = region
+
+        if not platform and not region:
+            platform, region = get_region_config()
+            if not platform:
+                raise ValueError("Region selection required")
+        elif platform and not region:
+            region = get_region_from_platform(platform)
+        elif not platform and region:
+            raise ValueError("Platform must be specified when region is provided")
+
         self.platform = platform
+        self.region = region
 
         self._core = Core()
 
@@ -36,24 +47,31 @@ class Player:
 
         self._match_details_cache = {}
 
+    async def __aenter__(self):
+        await self._core.__aenter__()
+        return self
 
-    def load_profile(self):
+    async def __aexit__(self, exc_type, exc_val, exc_tb):
+        return await self._core.__aexit__(exc_type, exc_val, exc_tb)
+
+
+    async def load_profile(self):
         print(f"Loading profile: {self.game_name}#{self.tag_line}")
 
-        self.puuid = self._account_api.get_puuid(
+        self.puuid = await self._account_api.get_puuid(
             self.game_name, self.tag_line, self.region
         )
         if not self.puuid:
             print("Failed to get PUUID")
             return False
 
-        self.summoner_info = self._summoner_api.get_summoner_infos(
+        self.summoner_info = await self._summoner_api.get_summoner_infos(
             self.puuid, self.platform
         )
-        self.rank_info = self._rank_api.get_rank_info(
+        self.rank_info = await self._rank_api.get_rank_info(
             self.puuid, self.platform, by_puuid=True
         )
-        self.champion_mastery = self._mastery_api.get_top_masteries(
+        self.champion_mastery = await self._mastery_api.get_top_masteries(
             self.puuid, self.platform, count=5
         )
 
@@ -61,19 +79,19 @@ class Player:
         return True
 
 
-    def _get_match_details_cached(self, match_id):
+    async def _get_match_details_cached(self, match_id):
         if match_id not in self._match_details_cache:
-            match_data = self._match_api.get_match_details(match_id, self.region)
+            match_data = await self._match_api.get_match_details(match_id, self.region)
             if match_data:
                 self._match_details_cache[match_id] = match_data
         return self._match_details_cache.get(match_id)
 
 
-    def _process_match_ids(self, match_ids):
+    async def _process_match_ids(self, match_ids):
         print(f"Fetching match details and extracting player data...")
 
         for i, match_id in enumerate(match_ids):
-            match_data = self._get_match_details_cached(match_id)
+            match_data = await self._get_match_details_cached(match_id)
             if match_data:
                 player_stats = extract_match_stats(match_data, self.puuid)
                 if player_stats:
@@ -86,24 +104,24 @@ class Player:
         return self.processed_stats
 
 
-    def load_recent_matches(self, count=100):
+    async def load_recent_matches(self, count=100):
         print(f"\nLoading {count} most recent matches...")
-        self.match_history = self._match_api.get_match_history(
+        self.match_history = await self._match_api.get_match_history(
             self.puuid, self.region, count=count
         )
         print(f"Found {len(self.match_history)} matches")
 
-        return self._process_match_ids(self.match_history)
+        return await self._process_match_ids(self.match_history)
 
 
-    def load_year_matches(self, year=2024):
-        self.match_history = self._match_api.get_year_match_history(
+    async def load_year_matches(self, year=2024):
+        self.match_history = await self._match_api.get_year_match_history(
             self.puuid, self.region, year
         )
-        return self._process_match_ids(self.match_history)
+        return await self._process_match_ids(self.match_history)
 
 
-    def load_match_timelines(self):
+    async def load_match_timelines(self):
         if not self.match_history:
             print("No match history. Load matches first.")
             return []
@@ -123,9 +141,9 @@ class Player:
             if not stat_entry:
                 continue
 
-            timeline = self._match_api.get_match_timeline(match_id, self.region)
+            timeline = await self._match_api.get_match_timeline(match_id, self.region)
             if timeline:
-                match_data = self._get_match_details_cached(match_id)
+                match_data = await self._get_match_details_cached(match_id)
                 if match_data:
                     timeline_stats = extract_timeline_stats(
                         match_data,

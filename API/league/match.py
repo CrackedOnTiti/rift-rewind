@@ -1,5 +1,5 @@
 from ..utils.helpers import get_month_timestamps, get_month_name
-import time
+import asyncio
 
 
 class Match:
@@ -7,7 +7,7 @@ class Match:
     def __init__(self, core):
         self.core = core
 
-    def get_match_history(
+    async def get_match_history(
         self,
         puuid,
         region="europe",
@@ -17,35 +17,50 @@ class Match:
         end_time=None
     ):
         try:
-            return self.core.watcher.match.matchlist_by_puuid(
-                region,
-                puuid,
-                start=start,
-                count=count,
-                start_time=start_time,
-                end_time=end_time
+            queries = {
+                "start": start,
+                "count": count
+            }
+            if start_time is not None:
+                queries["startTime"] = start_time
+            if end_time is not None:
+                queries["endTime"] = end_time
+
+            matches = await self.core.client.get_lol_match_v5_match_ids_by_puuid(
+                region=region,
+                puuid=puuid,
+                queries=queries
             )
+            return matches
         except Exception as e:
             print(f"Error fetching match history: {e}")
             return None
 
-    def get_match_details(self, match_id, region="europe"):
+    async def get_match_details(self, match_id, region="europe"):
         try:
-            return self.core.watcher.match.by_id(region, match_id)
+            match_data = await self.core.client.get_lol_match_v5_match(
+                region=region,
+                id=match_id
+            )
+            return match_data
         except Exception as e:
             print(f"Error fetching match details for {match_id}: {e}")
             return None
 
 
-    def get_match_timeline(self, match_id, region="europe"):
+    async def get_match_timeline(self, match_id, region="europe"):
         try:
-            return self.core.watcher.match.timeline_by_match(region, match_id)
+            timeline = await self.core.client.get_lol_match_v5_match_timeline(
+                region=region,
+                id=match_id
+            )
+            return timeline
         except Exception as e:
             print(f"Error fetching match timeline for {match_id}: {e}")
             return None
 
 
-    def get_year_match_history(self, puuid, region="europe", year=2024):
+    async def get_year_match_history(self, puuid, region="europe", year=2024):
         print(f"\n{'=' * 60}")
         print(f"  Fetching all matches for {year}")
         print(f"{'=' * 60}\n")
@@ -58,14 +73,14 @@ class Match:
 
             print(f"{month_name}...", end=" ")
 
-            month_matches = self._fetch_matches_with_pagination(
+            month_matches = await self._fetch_matches_with_pagination(
                 puuid, region, start_time, end_time
             )
 
             all_match_ids.extend(month_matches)
             print(f"{len(month_matches)} matches")
 
-            time.sleep(0.5)
+            await asyncio.sleep(0.5)
 
         print(f"\n{'=' * 60}")
         print(f"Total: {len(all_match_ids)} matches")
@@ -74,12 +89,12 @@ class Match:
         return all_match_ids
 
 
-    def get_bulk_match_details(self, match_ids, region="europe"):
+    async def get_bulk_match_details(self, match_ids, region="europe"):
         print(f"Fetching details for {len(match_ids)} matches...")
 
         matches = []
         for i, match_id in enumerate(match_ids):
-            match_data = self.get_match_details(match_id, region)
+            match_data = await self.get_match_details(match_id, region)
             if match_data:
                 matches.append(match_data)
 
@@ -90,7 +105,7 @@ class Match:
         return matches
 
 
-    def _fetch_matches_with_pagination(
+    async def _fetch_matches_with_pagination(
         self,
         puuid,
         region,
@@ -102,7 +117,7 @@ class Match:
         batch_size = 100
 
         while True:
-            batch = self.get_match_history(
+            batch = await self.get_match_history(
                 puuid=puuid,
                 region=region,
                 count=batch_size,
@@ -120,6 +135,6 @@ class Match:
                 break
 
             start_index += batch_size
-            time.sleep(0.1)
+            await asyncio.sleep(0.1)
 
         return all_matches
