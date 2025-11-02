@@ -1,6 +1,7 @@
 from typing import Optional, Tuple
 import sys
 import os
+import asyncio
 
 # Add parent directories to path to import API modules
 sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), '../../../')))
@@ -236,4 +237,72 @@ class PlayerService:
             'player': player.to_dynamodb_item(),
             'match_count': len(recent_matches),
             'recent_matches': [match.to_dynamodb_item() for match in recent_matches]
+        }
+
+    def calculate_player_stats_from_matches(self, puuid: str) -> Optional[dict]:
+        """
+        Calculate player statistics from their match history.
+
+        Analyzes matches to calculate:
+        - Winrate (percentage)
+        - Main role (most played)
+        - Top 5 champions (most played)
+
+        Args:
+            puuid: Player's unique identifier
+
+        Returns:
+            Dictionary with calculated stats or None if no matches
+        """
+        matches = self.match_repo.get_recent_matches(puuid, count=20)
+
+        if not matches:
+            return None
+
+        # Track stats
+        wins = 0
+        total_games = 0
+        role_counts = {}  # {role: count}
+        champion_counts = {}  # {champion_id: count}
+
+        for match in matches:
+            match_data = match.match_data
+            participants = match_data.get('info', {}).get('participants', [])
+
+            # Find this player's data in the match
+            player_data = next((p for p in participants if p.get('puuid') == puuid), None)
+
+            if not player_data:
+                continue
+
+            total_games += 1
+
+            # Count wins
+            if player_data.get('win', False):
+                wins += 1
+
+            # Count role
+            role = player_data.get('teamPosition', 'UNKNOWN')
+            if role and role != 'UNKNOWN':
+                role_counts[role] = role_counts.get(role, 0) + 1
+
+            # Count champion
+            champion_id = player_data.get('championId')
+            if champion_id:
+                champion_counts[champion_id] = champion_counts.get(champion_id, 0) + 1
+
+        # Calculate winrate
+        winrate = (wins / total_games * 100) if total_games > 0 else 0
+
+        # Get main role (most played)
+        main_role = max(role_counts.items(), key=lambda x: x[1])[0] if role_counts else None
+
+        # Get top 5 champions (most played)
+        sorted_champions = sorted(champion_counts.items(), key=lambda x: x[1], reverse=True)
+        main_champions = [str(champ_id) for champ_id, _ in sorted_champions[:5]]
+
+        return {
+            'winrate': round(winrate, 2),
+            'main_role': main_role,
+            'main_champions': main_champions
         }
