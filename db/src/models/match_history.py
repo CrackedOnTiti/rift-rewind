@@ -1,4 +1,4 @@
-from datetime import datetime
+from datetime import datetime, timezone
 from typing import Dict, Optional, Any
 from dataclasses import dataclass
 import time
@@ -21,7 +21,7 @@ class MatchHistory:
     def __post_init__(self):
         """Initialize created_at if not provided"""
         if self.created_at is None:
-            self.created_at = datetime.utcnow().isoformat()
+            self.created_at = datetime.now(timezone.utc).isoformat()
 
     def to_dynamodb_item(self) -> Dict:
         """Convert to DynamoDB item format"""

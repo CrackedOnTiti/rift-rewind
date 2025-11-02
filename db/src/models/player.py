@@ -1,4 +1,4 @@
-from datetime import datetime
+from datetime import datetime, timezone
 from typing import List, Dict, Optional
 from dataclasses import dataclass, asdict
 from decimal import Decimal
@@ -45,7 +45,7 @@ class Player:
 
     def __post_init__(self):
         """Initialize timestamps if not provided"""
-        now = datetime.utcnow().isoformat()
+        now = datetime.now(timezone.utc).isoformat()
         if self.created_at is None:
             self.created_at = now
         if self.updated_at is None:
@@ -98,4 +98,4 @@ class Player:
 
     def update_timestamp(self):
         """Update the updated_at timestamp"""
-        self.updated_at = datetime.utcnow().isoformat()
+        self.updated_at = datetime.now(timezone.utc).isoformat()

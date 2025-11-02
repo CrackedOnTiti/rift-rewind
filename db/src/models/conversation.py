@@ -1,4 +1,4 @@
-from datetime import datetime
+from datetime import datetime, timezone
 from typing import Dict, List, Optional
 from dataclasses import dataclass, field
 import uuid
@@ -40,7 +40,7 @@ class Conversation:
 
     def __post_init__(self):
         """Initialize timestamps if not provided"""
-        now = datetime.utcnow().isoformat()
+        now = datetime.now(timezone.utc).isoformat()
         if self.created_at is None:
             self.created_at = now
         if self.updated_at is None:
@@ -51,14 +51,14 @@ class Conversation:
         message = Message(
             role=role,
             content=content,
-            timestamp=datetime.utcnow().isoformat()
+            timestamp=datetime.now(timezone.utc).isoformat()
         )
         self.messages.append(message)
         self.update_timestamp()
 
     def update_timestamp(self):
         """Update the updated_at timestamp"""
-        self.updated_at = datetime.utcnow().isoformat()
+        self.updated_at = datetime.now(timezone.utc).isoformat()
 
     def to_dynamodb_item(self) -> Dict:
         """Convert to DynamoDB item format"""
@@ -92,7 +92,7 @@ class Conversation:
     @staticmethod
     def create_new(puuid: str, session_id: Optional[str] = None) -> 'Conversation':
         """Create a new conversation with a generated ID"""
-        conversation_id = f"{datetime.utcnow().isoformat()}_{uuid.uuid4().hex[:8]}"
+        conversation_id = f"{datetime.now(timezone.utc).isoformat()}_{uuid.uuid4().hex[:8]}"
         return Conversation(
             puuid=puuid,
             conversation_id=conversation_id,
