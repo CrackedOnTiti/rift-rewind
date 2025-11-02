@@ -117,10 +117,17 @@ class BaseRepository:
                 **kwargs
             }
 
+            # Check if Limit is specified
+            limit = params.get('Limit')
+
             response = self.table.query(**params)
             items = response.get('Items', [])
 
-            # Handle pagination if needed
+            # If Limit is specified, respect it and don't paginate beyond limit
+            if limit:
+                return items[:limit]
+
+            # Handle pagination only if no limit specified
             while 'LastEvaluatedKey' in response:
                 params['ExclusiveStartKey'] = response['LastEvaluatedKey']
                 response = self.table.query(**params)
