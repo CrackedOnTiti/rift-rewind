@@ -1,18 +1,44 @@
 import sys
 import os
-import time
-import json
-import uuid
+import asyncio
 
 # Add parent directories to path
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)))))
 
 from dotenv import load_dotenv
-from riot_client.riot.account import RiotAccountAPI
-from db.src.db_handshake import get_dynamodb_reasources
+from API.Core import Core
+from API.riot.account import RiotAccountAPI
 
 # Load environment variables
 load_dotenv()
+
+# Helper function to call async API from sync code
+def get_puuid_from_riot(riot_id, region):
+    """
+    Wrapper to call async Riot API from synchronous CLI code.
+
+    Args:
+        riot_id: "Name#TAG" format
+        region: Region like "americas", "europe", "asia"
+
+    Returns:
+        PUUID string or None if not found
+    """
+    async def _fetch():
+        async with Core() as core:
+            riot_api = RiotAccountAPI(core)
+
+            # Split riot_id into name and tag
+            parts = riot_id.split('#')
+            if len(parts) != 2:
+                return None
+
+            game_name, tag_line = parts[0], parts[1]
+            puuid = await riot_api.get_puuid(game_name, tag_line, region=region)
+            return puuid
+
+    # Run the async function
+    return asyncio.run(_fetch())
 
 # Region mapping for Riot API
 REGION_MAP = {
@@ -79,60 +105,80 @@ def get_region_input():
 
         print(f"[ERROR] Invalid region '{region_input}'. Please choose from the list above.")
 
-def validate_riot_account(game_name, tag_line, region_config):
-    """Validate if Riot account exists and return PUUID."""
-    print(f"\n[INFO] Looking up Riot account: {game_name}#{tag_line}...")
+def validate_and_authenticate_player(riot_id, region):
+    """
+    Validate Riot account and authenticate player.
+
+    Flow:
+    1. Check if riot_id exists in Riot API
+    2. Check if player exists in database
+    3. If not, create player in database
+    4. Create session token
+
+    Returns:
+        Tuple of (session_token, player) or (None, None) if failed
+    """
+    print(f"\n[STEP 1/2] Validating Riot account: {riot_id}...")
 
     try:
-        riot_api = RiotAccountAPI()
-        puuid = riot_api.get_puuid(game_name, tag_line, region=region_config["region"])
+        # Map platform to region for Riot API
+        # Your friend's API uses "americas", "europe", "asia", "sea"
+        region_to_riot_region = {
+            "na1": "americas",
+            "br1": "americas",
+            "la1": "americas",
+            "la2": "americas",
+            "euw1": "europe",
+            "eun1": "europe",
+            "tr1": "europe",
+            "ru": "europe",
+            "kr": "asia",
+            "jp1": "asia",
+            "oc1": "sea"
+        }
 
-        if puuid:
-            print(f"[SUCCESS] Riot account found! PUUID: {puuid[:8]}...")
-            return puuid
-        else:
-            print("[ERROR] Riot account not found. Please check the name and tag.")
-            return None
+        riot_region = region_to_riot_region.get(region, "americas")
+
+        # Use your friend's async API
+        puuid = get_puuid_from_riot(riot_id, riot_region)
+
+        if not puuid:
+            print(f"[ERROR] Riot account '{riot_id}' not found in region '{region}'")
+            print("[TIP] Make sure you're using the correct region")
+            return None, None
+
+        print(f"[SUCCESS] Riot account found! PUUID: {puuid[:16]}...")
+
     except Exception as e:
-        print(f"[ERROR] Error validating Riot account: {e}")
-        return None
+        print(f"[ERROR] Failed to validate Riot account: {e}")
+        import traceback
+        traceback.print_exc()
+        return None, None
 
-def check_or_create_player(puuid, game_name, tag_line):
-    """Check if player exists in DynamoDB, create if not."""
-    print(f"\n[INFO] Checking player database...")
+    print(f"\n[STEP 2/2] Checking database...")
 
     try:
-        dynamodb = get_dynamodb_reasources()
-        table = dynamodb.Table('Players')
+        # Use PlayerService to handle everything
+        player_service = PlayerService()
 
-        # Try to get existing player
-        response = table.get_item(Key={'puuid': puuid})
+        # This will:
+        # - Check if player exists in DB by riot_id
+        # - If not, create new player with PUUID
+        # - Create a session token
+        session_token, player = player_service.authenticate_player(riot_id, region)
 
-        if 'Item' in response:
-            print(f"[SUCCESS] Welcome back! Found existing player record.")
-            return response['Item']
+        if player:
+            print(f"[SUCCESS] Player authenticated!")
+            return session_token, player
         else:
-            # Create new player record
-            print(f"[INFO] First time user! Creating new player record...")
-
-            player_uuid = str(uuid.uuid4())
-            player_data = {
-                'puuid': puuid,
-                'player_uuid': player_uuid,
-                'game_name': game_name,
-                'tag_line': tag_line,
-                'created_at': int(time.time()),
-                'last_accessed': int(time.time())
-            }
-
-            table.put_item(Item=player_data)
-            print(f"[SUCCESS] Player record created! UUID: {player_uuid[:8]}...")
-
-            return player_data
+            print("[ERROR] Failed to authenticate player")
+            return None, None
 
     except Exception as e:
         print(f"[ERROR] Database error: {e}")
-        return None
+        import traceback
+        traceback.print_exc()
+        return None, None
 
 def run_chat(session_token=None):
     """Start AI coaching chat with player lookup."""
@@ -142,30 +188,41 @@ def run_chat(session_token=None):
 
     # Get player information
     game_name, tag_line = get_player_input()
+    riot_id = f"{game_name}#{tag_line}"
+
     region_config = get_region_input()
+    region = region_config["platform"]  # Use platform (na1, euw1, etc.)
 
-    # Validate Riot account
-    puuid = validate_riot_account(game_name, tag_line, region_config)
-    if not puuid:
-        print("\n[ERROR] Cannot proceed without valid Riot account.")
+    # Validate and authenticate player
+    session_token, player = validate_and_authenticate_player(riot_id, region)
+
+    if not player:
+        print("\n[ERROR] Cannot proceed without valid player.")
         return
 
-    # Check or create player in database
-    player_data = check_or_create_player(puuid, game_name, tag_line)
-    if not player_data:
-        print("\n[ERROR] Database error. Cannot proceed.")
-        return
-
+    # Display player info
     print("\n" + "=" * 50)
-    print(f"  Chat session ready for {game_name}#{tag_line}")
+    print(f"  Chat Session Ready")
     print("=" * 50)
+    print(f"Player: {player.riot_id}")
+    print(f"Region: {player.region}")
+    print(f"PUUID: {player.puuid[:16]}...")
+    print(f"Session Token: {session_token[:16]}...")
+
+    if player.main_role:
+        print(f"Main Role: {player.main_role}")
+    if player.winrate:
+        print(f"Winrate: {player.winrate}%")
+    if player.current_rank:
+        print(f"Rank: {player.current_rank.tier} {player.current_rank.division}")
+
+    print("=" * 50)
+
+    # TODO: Next steps (to be implemented)
+    print("\n[TODO] Next steps:")
+    print("  1. Sync player's match history from Riot API")
+    print("  2. Load conversation history from database")
+    print("  3. Initialize AI chat with player context")
+    print("  4. Start interactive chat loop")
     print("\n[INFO] Chat functionality coming soon...")
-    print("Player UUID:", player_data.get('player_uuid'))
-
-    # TODO: Initialize AI chat session with player context
-    # TODO: Load player stats and pass to AI
-    # TODO: Implement chat loop
-
-    # TODO: get name + region -> check if account exists (riot) -> check if name is in dynamoDB -> get equivalent PUUID -> ...
-    #                                                          |  
-    #                                                           ->  fail
+    print("\nPlayer is authenticated and ready for chat implementation!")
