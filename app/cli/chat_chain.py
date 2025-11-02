@@ -8,6 +8,7 @@ sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspa
 from dotenv import load_dotenv
 from API.Core import Core
 from API.riot.account import RiotAccountAPI
+from app.cli.client_check import check_and_build_client
 
 # Load environment variables
 load_dotenv()
@@ -105,7 +106,7 @@ def get_region_input():
 
         print(f"[ERROR] Invalid region '{region_input}'. Please choose from the list above.")
 
-def validate_and_authenticate_player(riot_id, region):
+def validate_and_authenticate_player(riot_id, platform):
     """
     Validate Riot account and authenticate player.
 
@@ -137,7 +138,7 @@ def validate_and_authenticate_player(riot_id, region):
             "oc1": "sea"
         }
 
-        riot_region = region_to_riot_region.get(region, "americas")
+        riot_region = region_to_riot_region.get(platform, "americas")
 
         # Use your friend's async API
         puuid = get_puuid_from_riot(riot_id, riot_region)
@@ -158,16 +159,10 @@ def validate_and_authenticate_player(riot_id, region):
     print(f"\n[STEP 2/2] Checking database...")
 
     try:
-        # Use PlayerService to handle everything
-        player_service = PlayerService()
+        # Check and build/update player profile in database
+        success, player, session_token = check_and_build_client(puuid, riot_id, riot_region, platform)
 
-        # This will:
-        # - Check if player exists in DB by riot_id
-        # - If not, create new player with PUUID
-        # - Create a session token
-        session_token, player = player_service.authenticate_player(riot_id, region)
-
-        if player:
+        if success and player and session_token:
             print(f"[SUCCESS] Player authenticated!")
             return session_token, player
         else:
@@ -191,10 +186,10 @@ def run_chat(session_token=None):
     riot_id = f"{game_name}#{tag_line}"
 
     region_config = get_region_input()
-    region = region_config["platform"]  # Use platform (na1, euw1, etc.)
+    platform = region_config["platform"]  # Platform (na1, euw1, etc.)
 
     # Validate and authenticate player
-    session_token, player = validate_and_authenticate_player(riot_id, region)
+    session_token, player = validate_and_authenticate_player(riot_id, platform)
 
     if not player:
         print("\n[ERROR] Cannot proceed without valid player.")
