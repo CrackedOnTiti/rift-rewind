@@ -42,6 +42,7 @@ def get_puuid_from_riot(riot_id, region):
     return asyncio.run(_fetch())
 
 # Region mapping for Riot API
+# TODO: Consolidate duplicate region mappings across codebase
 REGION_MAP = {
     "na": {"region": "americas", "platform": "na1"},
     "na1": {"region": "americas", "platform": "na1"},
@@ -123,7 +124,7 @@ def validate_and_authenticate_player(riot_id, platform):
 
     try:
         # Map platform to region for Riot API
-        # Your friend's API uses "americas", "europe", "asia", "sea"
+        # TODO: Consolidate duplicate region mappings across codebase
         region_to_riot_region = {
             "na1": "americas",
             "br1": "americas",
