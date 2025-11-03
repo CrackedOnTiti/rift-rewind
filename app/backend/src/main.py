@@ -6,6 +6,7 @@ app = Flask(__name__)
 CORS(app)
 
 PUBLIC_FOLDER = '/app/frontend/public'
+SRC_FOLDER = '/app/frontend/src'
 
 @app.route('/')
 def index():
@@ -18,6 +19,10 @@ def map_view():
 @app.route('/<path:filename>')
 def public_files(filename):
     return send_from_directory(PUBLIC_FOLDER, filename)
+
+@app.route('/src/<path:filename>')
+def src_files(filename):
+    return send_from_directory(SRC_FOLDER, filename)
 
 @app.route("/assets/<path:filename>")
 def serve_models(filename):
