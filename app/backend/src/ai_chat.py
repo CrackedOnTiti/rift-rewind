@@ -4,6 +4,11 @@ from dotenv import load_dotenv
 from langchain_aws import ChatBedrock
 from langchain_core.messages import SystemMessage, HumanMessage, AIMessage
 
+# TODO: RAG Implementation
+# 1. Add vector DB client (AWS OpenSearch / FAISS)
+# 2. Add embedding model (Bedrock Titan Embeddings)
+# 3. Add retrieval functions (semantic search for past conversations & coaching knowledge)
+
 load_dotenv()
 
 SYSTEM_PROMPT = """You are the AI chatbot for the RiftRewind website.
@@ -78,6 +83,11 @@ def chat_loop():
         try:
             # Add user message to history
             messages.append(HumanMessage(content=user_input))
+
+            # TODO: RAG - Retrieve relevant context before invoking Claude
+            # 1. Embed user_input query
+            # 2. Search vector DB for similar past conversations/coaching tips
+            # 3. Inject top-k relevant contexts into messages (as SystemMessage or HumanMessage)
 
             # Get AI response with retry logic
             max_retries = 3
