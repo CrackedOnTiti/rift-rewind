@@ -214,11 +214,16 @@ def run_chat(session_token=None):
 
     print("=" * 50)
 
-    # TODO: Next steps (to be implemented)
-    print("\n[TODO] Next steps:")
-    print("  1. Sync player's match history from Riot API")
-    print("  2. Load conversation history from database")
-    print("  3. Initialize AI chat with player context")
-    print("  4. Start interactive chat loop")
-    print("\n[INFO] Chat functionality coming soon...")
-    print("\nPlayer is authenticated and ready for chat implementation!")
+    # Build AI context with player data and privacy rules
+    from app.cli.ai_context import build_ai_context_from_player
+    ai_context = build_ai_context_from_player(player)
+
+    # Start AI coaching session
+    print("\n[INFO] Starting AI coaching session...")
+
+    # Import AI chat module
+    sys.path.insert(0, os.path.join(os.path.dirname(__file__), '..', 'backend', 'src'))
+    from ai_chat import start_chat_session
+
+    # Launch chat with player context
+    start_chat_session(player_context=ai_context)
