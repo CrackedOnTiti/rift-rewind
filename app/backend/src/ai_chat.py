@@ -6,7 +6,7 @@ from langchain_aws import ChatBedrock
 from langchain_core.messages import SystemMessage, HumanMessage, AIMessage, ToolMessage
 
 # Import our League of Legends tools
-from league_tools import TOOL_DEFINITIONS, execute_tool
+from league_tools import TOOL_DEFINITIONS, execute_tool, set_player_puuid
 
 # TODO: RAG Implementation
 # 1. Add vector DB client (AWS OpenSearch / FAISS)
@@ -109,6 +109,10 @@ def start_chat_session(player_context=None):
     print("Connecting to AWS Bedrock...")
     chat = create_chat()
     print("Connected! Start chatting:\n")
+
+    # Set player PUUID for match history access
+    if player_context and player_context.get('puuid'):
+        set_player_puuid(player_context['puuid'])
 
     # Build system prompt with player context
     system_prompt = SYSTEM_PROMPT
