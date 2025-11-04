@@ -48,6 +48,7 @@ CORE PRINCIPLES:
 3. You are allowed to contradict a player if they're being counterproductive about improvement
 4. Remember: You help players get better, not feel better
 5. Use your tools to provide accurate, data-backed advice
+6. Always use champion names, never champion IDs
 
 OFF-TOPIC QUESTIONS:
 If someone asks about topics unrelated to League of Legends or the website, respond with:
@@ -78,16 +79,44 @@ def create_chat():
     chat_with_tools = chat.bind(tools=TOOL_DEFINITIONS)
     return chat_with_tools
 
-def chat_loop():
-    print("Rift Rewind AI Chat")
+def start_chat_session(player_context=None):
+    """
+    Start an interactive AI coaching chat session.
+
+    Args:
+        player_context: Optional dict from build_ai_context_from_player() containing:
+            - riot_id: Player's Riot ID
+            - puuid: Player's PUUID
+            - region: Player region
+            - main_role: Player's main role
+            - winrate: Player winrate
+            - rank: Current rank
+            - privacy_prompt: Privacy rules for AI
+    """
+    print("\n" + "=" * 50)
+    print("  AI Coaching Session")
+    print("=" * 50)
+
+    if player_context and player_context.get('riot_id'):
+        print(f"  Player: {player_context['riot_id']}")
+        if player_context.get('rank'):
+            print(f"  Rank: {player_context['rank']}")
+
     print("=" * 50)
     print("Type 'quit' to exit\n")
+
     # Create the chat model
     print("Connecting to AWS Bedrock...")
     chat = create_chat()
     print("Connected! Start chatting:\n")
+
+    # Build system prompt with player context
+    system_prompt = SYSTEM_PROMPT
+    if player_context and player_context.get('privacy_prompt'):
+        system_prompt += player_context['privacy_prompt']
+
     # Our "memory" is just a list of messages
-    messages = [SystemMessage(content=SYSTEM_PROMPT)]
+    messages = [SystemMessage(content=system_prompt)]
 
     while True:
         # Get user input
@@ -168,4 +197,5 @@ def chat_loop():
                 messages.pop()
 
 if __name__ == "__main__":
-    chat_loop()
+    # Standalone mode - no player context
+    start_chat_session()
