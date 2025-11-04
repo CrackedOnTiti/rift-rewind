@@ -1,14 +1,31 @@
 """
 League of Legends data tools for AI chatbot.
 Provides Claude with tools to query champions, items, runes, and builds from league_data.db
+Also provides tools to query player match history from DynamoDB
 """
 
 import sqlite3
 import json
+import sys
+import os
 from pathlib import Path
 
 # Database path
 DB_PATH = Path(__file__).parent.parent.parent / "data" / "league_data.db"
+
+# Add project root to path for DynamoDB access
+project_root = os.path.join(os.path.dirname(__file__), '..', '..', '..')
+sys.path.insert(0, project_root)
+
+# Global variable to store current player's PUUID (set at session start)
+_CURRENT_PLAYER_PUUID = None
+
+
+def set_player_puuid(puuid: str):
+    """Set the current player's PUUID for match history queries."""
+    global _CURRENT_PLAYER_PUUID
+    _CURRENT_PLAYER_PUUID = puuid
+
 
 def get_db_connection():
     """Create and return a database connection."""
@@ -343,6 +360,96 @@ def search_runes(query: str = None, tree: str = None, keystone_only: bool = Fals
         })
     return runes
 
+
+# ============================================================================
+# MATCH HISTORY FUNCTIONS (DynamoDB)
+# ============================================================================
+
+def convert_decimal_to_number(obj):
+    """Convert Decimal objects to int/float for JSON serialization."""
+    from decimal import Decimal
+
+    if isinstance(obj, list):
+        return [convert_decimal_to_number(item) for item in obj]
+    elif isinstance(obj, dict):
+        return {key: convert_decimal_to_number(value) for key, value in obj.items()}
+    elif isinstance(obj, Decimal):
+        # Convert to int if it's a whole number, otherwise float
+        return int(obj) if obj % 1 == 0 else float(obj)
+    else:
+        return obj
+
+
+def get_recent_matches(count: int = 10):
+    """
+    Get recent match history for the authenticated player.
+
+    Args:
+        count: Number of recent matches to retrieve (max 20, default 10)
+
+    Returns:
+        List of recent matches with relevant stats
+    """
+    if not _CURRENT_PLAYER_PUUID:
+        return {"error": "No authenticated player session"}
+
+    try:
+        # Import DynamoDB modules
+        from db.src.repositories.match_repository import MatchRepository
+        from db.src.db_handshake import get_dynamodb_reasources
+
+        dynamodb = get_dynamodb_reasources()
+        match_repo = MatchRepository(dynamodb)
+
+        # Limit to max 20 matches
+        count = min(count, 20)
+
+        matches = match_repo.get_recent_matches(_CURRENT_PLAYER_PUUID, count=count)
+
+        if not matches:
+            return {"message": "No match history found"}
+
+        # Extract relevant info from each match
+        match_summaries = []
+        for match in matches:
+            match_data = match.match_data
+            info = match_data.get('info', {})
+            participants = info.get('participants', [])
+
+            # Find this player's data
+            player_data = next((p for p in participants if p.get('puuid') == _CURRENT_PLAYER_PUUID), None)
+
+            if not player_data:
+                continue
+
+            # Convert all values to regular Python types (no Decimals)
+            kills = int(player_data.get('kills', 0))
+            deaths = int(player_data.get('deaths', 0))
+            assists = int(player_data.get('assists', 0))
+
+            match_summaries.append({
+                "match_id": match.match_id,
+                "timestamp": int(match.timestamp),
+                "champion": str(player_data.get('championName', 'Unknown')),
+                "role": str(player_data.get('teamPosition', 'Unknown')),
+                "win": bool(player_data.get('win', False)),
+                "kills": kills,
+                "deaths": deaths,
+                "assists": assists,
+                "kda": f"{kills}/{deaths}/{assists}",
+                "damage_dealt": int(player_data.get('totalDamageDealtToChampions', 0)),
+                "gold_earned": int(player_data.get('goldEarned', 0)),
+                "cs": int(player_data.get('totalMinionsKilled', 0)) + int(player_data.get('neutralMinionsKilled', 0)),
+                "vision_score": int(player_data.get('visionScore', 0)),
+                "game_duration_minutes": int(info.get('gameDuration', 0)) // 60
+            })
+
+        return match_summaries
+
+    except Exception as e:
+        return {"error": f"Failed to fetch match history: {str(e)}"}
+
+
 TOOL_DEFINITIONS = [
     {
         "name": "search_champions",
@@ -458,6 +565,19 @@ TOOL_DEFINITIONS = [
                 }
             }
         }
+    },
+    {
+        "name": "get_recent_matches",
+        "description": "Get the player's recent match history with stats. Use this when the player asks about their recent games, performance, or wants to analyze specific matches.",
+        "input_schema": {
+            "type": "object",
+            "properties": {
+                "count": {
+                    "type": "integer",
+                    "description": "Number of recent matches to retrieve (default: 10, max: 20)"
+                }
+            }
+        }
     }
 ]
 
@@ -479,7 +599,8 @@ def execute_tool(tool_name: str, tool_input: dict):
         "get_item_details": get_item_details,
         "get_recommended_build": get_recommended_build,
         "get_champion_counters": get_champion_counters,
-        "search_runes": search_runes
+        "search_runes": search_runes,
+        "get_recent_matches": get_recent_matches
     }
     if tool_name not in tool_functions:
         return {"error": f"Unknown tool: {tool_name}"}
