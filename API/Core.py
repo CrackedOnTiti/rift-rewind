@@ -1,4 +1,5 @@
 import aiohttp, asyncio
+import os
 from pulsefire.clients import RiotAPIClient
 
 class Core:
@@ -10,13 +11,18 @@ class Core:
         "sea": "https://sea.api.riotgames.com",
     }
 
-    def __init__(self, api_key_path="donotpush/riot_api_key.txt"):
-        self.api_key = self.load_api_key(api_key_path)
+    def __init__(self):
+        self.api_key = self.load_api_key()
         self.client = RiotAPIClient(default_headers={"X-Riot-Token": self.api_key})
 
-    def load_api_key(self, path):
-        with open(path, "r") as f:
-            return f.read().strip()
+    def load_api_key(self):
+        api_key = os.getenv('RIOT_API_KEY')
+        if api_key:
+            return api_key.strip()
+
+        raise ValueError(
+            "RIOT_API_KEY not found please set RIOT_API_KEY environment variable in your .env file"
+        )
 
     async def __aenter__(self):
         await self.client.__aenter__()
