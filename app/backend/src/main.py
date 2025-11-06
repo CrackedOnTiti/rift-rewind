@@ -1,5 +1,5 @@
 from flask import Flask, jsonify, request, send_from_directory
-from flask_cors import CORS
+import base64
 import os
 import sys
 import asyncio
@@ -11,6 +11,7 @@ load_dotenv()
 
 sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), '../../../')))
 
+from app.backend.src.image_creation import RewindExportProfil, RewindCardGeneration
 from API.models.player import Player
 from API.analytics.zones.zone_analyzer import analyze_player_zones
 from API.story.story_generator import generate_all_stories
@@ -20,42 +21,26 @@ from app.backend.src.utils.input_validator import (
     validate_zone_id, sanitize_string
 )
 
-# Check if we should use mock DB
-USE_MOCK_DB = os.getenv('USE_MOCK_DB', 'false').lower() == 'true'
+# Import AI chat functionality (for /api/coach endpoint)
+from app.backend.src.ai_chat import create_chat, SYSTEM_PROMPT
+from league_tools import TOOL_DEFINITIONS, execute_tool, set_player_puuid
+from langchain_core.messages import SystemMessage, HumanMessage, AIMessage, ToolMessage
+import json
 
-if USE_MOCK_DB:
-    print("\n" + "="*60)
-    print("🔧 MOCK DB MODE ENABLED - Zero AWS costs!")
-    print("="*60 + "\n")
-    from testing.mocks.mock_db import (
-        MockPlayerRepository as PlayerRepository,
-        store_all_stories, get_all_stories, is_story_fresh,
-        delete_all_stories, get_story, check_story_mode
-    )
-    player_repo = PlayerRepository()
-else:
-    print("\n" + "="*60)
-    print("☁️  REAL DB MODE - Using AWS DynamoDB")
-    print("="*60 + "\n")
-    from db.src.queries.story_queries import (
-        get_all_stories, store_all_stories, is_story_fresh, delete_all_stories, get_story, check_story_mode
-    )
-    from db.src.repositories.player_repository import PlayerRepository
-    from db.src.db_handshake import get_dynamodb_resources
-    dynamodb = get_dynamodb_resources()
-    player_repo = PlayerRepository(dynamodb)
+# Using AWS DynamoDB for production
+from db.src.queries.story_queries import (
+    get_all_stories, store_all_stories, is_story_fresh, delete_all_stories, get_story, check_story_mode
+)
+from db.src.repositories.player_repository import PlayerRepository
+from db.src.repositories.session_repository import SessionRepository
+from db.src.repositories.conversation_repository import ConversationRepository
+from db.src.db_handshake import get_dynamodb_resources
+dynamodb = get_dynamodb_resources()
+player_repo = PlayerRepository(dynamodb)
+session_repo = SessionRepository(dynamodb)
+conversation_repo = ConversationRepository(dynamodb)
 
 app = Flask(__name__)
-
-ALLOWED_ORIGINS = os.getenv('ALLOWED_ORIGINS', 'http://localhost:3000,http://localhost:5000').split(',')
-CORS(app, resources={
-    r"/api/*": {
-        "origins": ALLOWED_ORIGINS,
-        "methods": ["GET", "POST"],
-        "allow_headers": ["Content-Type"],
-        "max_age": 3600
-    }
-})
 
 # Serve everything from public folder (HTML, CSS, JS, assets)
 PUBLIC_FOLDER = os.path.join(os.path.dirname(__file__), '../../frontend/public')
@@ -104,9 +89,99 @@ def health_check():
     return jsonify({
         'status': 'healthy',
         'version': '1.0.0',
-        'database': 'mock' if USE_MOCK_DB else 'dynamodb',
-        'ai': 'mock' if os.getenv('USE_MOCK_AI', 'false').lower() == 'true' else 'bedrock'
+        'database': 'dynamodb',
+        'ai': 'bedrock'
     }), 200
+
+
+@app.route('/api/authenticate', methods=['POST'])
+def authenticate_player():
+    """
+    Authentication endpoint - validates player on Riot API and creates/updates in DB
+
+    Request:
+    {
+        "gameName": "sad and bad",
+        "tagLine": "2093",
+        "platform": "euw1"
+    }
+
+    Response:
+    {
+        "session_token": "uuid",
+        "player": { "riot_id": "sad and bad#2093", "puuid": "...", ... }
+    }
+    """
+    try:
+        data = request.get_json()
+
+        if not data:
+            return jsonify({'error': 'Invalid JSON'}), 400
+
+        game_name = data.get('gameName')
+        tag_line = data.get('tagLine')
+        platform = data.get('platform', 'euw1')
+
+        if not game_name or not tag_line:
+            return jsonify({'error': 'gameName and tagLine are required'}), 400
+
+        riot_id = f"{game_name}#{tag_line}"
+
+        print(f"\nAuthenticating player: {riot_id} on {platform}")
+
+        # Use existing CLI logic to check/build player
+        from app.cli.client_check import check_and_build_client
+
+        # Map platform to region
+        platform_to_region = {
+            'na1': 'americas', 'br1': 'americas', 'la1': 'americas', 'la2': 'americas',
+            'euw1': 'europe', 'eun1': 'europe', 'tr1': 'europe', 'ru': 'europe',
+            'kr': 'asia', 'jp1': 'asia',
+            'oc1': 'sea', 'ph2': 'sea', 'sg2': 'sea', 'th2': 'sea', 'tw2': 'sea', 'vn2': 'sea'
+        }
+        region = platform_to_region.get(platform, 'europe')
+
+        # Get PUUID from Riot API first
+        from API.Core import Core
+        from API.riot.account import RiotAccountAPI
+
+        async def fetch_puuid():
+            async with Core() as core:
+                account_api = RiotAccountAPI(core)
+                return await account_api.get_puuid(game_name, tag_line, region)
+
+        puuid = asyncio.run(fetch_puuid())
+
+        if not puuid:
+            return jsonify({'error': f'Player {riot_id} not found on Riot servers'}), 404
+
+        print(f"Found player: {riot_id} (PUUID: {puuid[:16]}...)")
+
+        # Check and build client (creates/updates player, fetches matches, creates session)
+        success, player, session_token = check_and_build_client(puuid, riot_id, region, platform)
+
+        if not success:
+            return jsonify({'error': 'Failed to build player profile'}), 500
+
+        return jsonify({
+            'session_token': session_token,
+            'player': {
+                'riot_id': riot_id,
+                'puuid': puuid,
+                'gameName': game_name,
+                'tagLine': tag_line,
+                'rank': player.current_rank if player else None,
+                'winrate': player.winrate if player else None
+            },
+            'metadata': {
+                'cached': False
+            }
+        }), 200
+
+    except Exception as e:
+        print(f"Error in /api/authenticate: {e}")
+        traceback.print_exc()
+        return jsonify({'error': str(e)}), 500
 
 
 # ============================================================================
@@ -444,6 +519,281 @@ def refresh_player(riot_id):
         print(f"Error in /api/refresh: {e}")
         traceback.print_exc()
         return jsonify({'error': 'Internal server error'}), 500
+
+@app.route('/api/generate-card/<riot_id>', methods=['GET'])
+def generate_card(riot_id):
+    """Generate player card image"""
+    try:
+        # Validate riot_id
+        is_valid, error = validate_riot_id(riot_id)
+        if not is_valid:
+            return jsonify({'error': error}), 400
+
+        riot_id_parsed = parse_riot_id(riot_id)
+        
+        # Get player data
+        player = player_repo.get_by_riot_id(riot_id_parsed)
+        if not player:
+            return jsonify({'error': 'Player not found'}), 404
+
+        # Get stories
+        stories = get_all_stories(player.puuid)
+        if not stories:
+            return jsonify({'error': 'No stories found'}), 404
+
+        # Extract player info
+        game_name = riot_id_parsed.split('#')[0]
+        
+        # Get stats from stories
+        intro_story = next((s for s in stories if s['zone_id'] == 'intro'), None)
+        stats = intro_story.get('stats', {}) if intro_story else {}
+        
+        # Determine most played champion (you'll need to add this logic)
+        champion_played = stats.get('most_played_champion', 'Ahri')
+        games_played = stats.get('total_games', 0)
+        kd = stats.get('kda', 0.0)
+        lvl = player.summoner_info.get('summonerLevel', 1) if hasattr(player, 'summoner_info') else 1
+        rank = player.rank_info[0] if hasattr(player, 'rank_info') and player.rank_info else 'Unranked'
+        
+        # Get title and story from intro
+        title = intro_story.get('zone_name', 'The Legend') if intro_story else 'The Legend'
+        story = intro_story.get('story_text', 'A summoner of great skill')[:100] if intro_story else 'A summoner of great skill'
+        
+        # Create profile
+        profil = RewindExportProfil(
+            player_name=game_name,
+            champion_played=champion_played,
+            games_played=games_played,
+            kd=kd,
+            lvl=lvl,
+            rank=rank,
+            title=title,
+            story=story
+        )
+        
+        # Generate card
+        generator = RewindCardGeneration(profil)
+        success = generator.create_card()
+        
+        if not success:
+            return jsonify({'error': 'Failed to generate card'}), 500
+        
+        # Read the generated image and convert to base64
+        filename = f"{game_name}_rewind_card.png"
+        with open(filename, 'rb') as f:
+            image_data = base64.b64encode(f.read()).decode('utf-8')
+        os.remove(filename)
+        
+        return jsonify({
+            'success': True,
+            'image': f"data:image/png;base64,{image_data}",
+            'player_name': game_name
+        }), 200
+        
+    except Exception as e:
+        print(f"Error generating card: {e}")
+        traceback.print_exc()
+        return jsonify({'error': 'Internal server error'}), 500
+
+
+@app.route('/api/coach', methods=['POST'])
+def coach_endpoint():
+    """
+    AI Coaching Chat Endpoint
+
+    Request body:
+    {
+        "session_token": "uuid-token",
+        "message": "user's question",
+        "conversationHistory": [ {role, content, timestamp}, ... ],
+        "playerData": {...} (optional)
+    }
+
+    Response:
+    {
+        "response": "AI coaching advice"
+    }
+    """
+    try:
+        data = request.get_json()
+
+        if not data:
+            return jsonify({'error': 'Invalid JSON'}), 400
+
+        session_token = data.get('session_token')
+        user_message = data.get('message', '')
+        conversation_history = data.get('conversationHistory', [])
+
+        if not session_token:
+            return jsonify({'error': 'session_token is required'}), 400
+
+        if not user_message:
+            return jsonify({'error': 'message is required'}), 400
+
+        print(f"\n{'='*60}")
+        print(f"Chat Request")
+        print(f"Message: {user_message}")
+        print(f"Session: {session_token[:16]}...")
+        print(f"{'='*60}\n")
+
+        # Validate session token
+        puuid = session_repo.get_puuid_from_session(session_token)
+
+        if not puuid:
+            return jsonify({'error': 'Invalid or expired session'}), 401
+
+        # Extract player name from session token (since session has riot_id)
+        session = session_repo.get_session(session_token)
+        player_name = session.riot_id if session else f"Player ({puuid[:8]})"
+
+        print(f"Session valid for player: {player_name}")
+
+        # Set PUUID for tool use (match history access)
+        set_player_puuid(puuid)
+
+        # Load recent conversations from DynamoDB (last 3 conversations)
+        recent_conversations = []
+        try:
+            recent_conversations = conversation_repo.get_recent_conversations(puuid, count=3)
+            if recent_conversations:
+                print(f"Loaded {len(recent_conversations)} previous conversation(s)")
+        except Exception as e:
+            print(f"Could not load conversation history: {e}")
+
+        # Build system prompt with player context
+        system_prompt = SYSTEM_PROMPT
+        system_prompt += f"\n\nPLAYER CONTEXT:\nPlayer: {player_name}\n"
+
+        # Add conversation history context to system prompt
+        if recent_conversations:
+            history_context = "\n\nRECENT CONVERSATION HISTORY:\n"
+            history_context += "You have chatted with this player before. Here are summaries of recent conversations:\n\n"
+
+            for idx, conv in enumerate(reversed(recent_conversations), 1):
+                history_context += f"--- Conversation {idx} (from {conv.created_at[:10]}) ---\n"
+                # Include last few messages from each conversation
+                for msg in conv.messages[-4:]:  # Last 4 messages per conversation
+                    role_label = "Player" if msg.role == "user" else "You"
+                    history_context += f"{role_label}: {msg.content[:150]}{'...' if len(msg.content) > 150 else ''}\n"
+                history_context += "\n"
+
+            history_context += "Use this context to remember the player's preferences, past discussions, and provide continuity.\n"
+            system_prompt += history_context
+
+        # Initialize messages with system prompt
+        messages = [SystemMessage(content=system_prompt)]
+
+        # Add conversation history (last 6 messages for context)
+        if conversation_history:
+            for msg in conversation_history[-6:]:
+                role = msg.get('role', 'user')
+                content = msg.get('content', '')
+
+                if role == 'user':
+                    messages.append(HumanMessage(content=content))
+                elif role == 'ai':
+                    messages.append(AIMessage(content=content))
+
+        # Add current user message
+        messages.append(HumanMessage(content=user_message))
+
+        # Create chat model with tools
+        chat = create_chat()
+
+        # Tool use loop - continue until we get a final response
+        max_iterations = 10
+        iteration = 0
+
+        while iteration < max_iterations:
+            iteration += 1
+
+            # Get AI response with retry logic
+            max_retries = 5
+            for attempt in range(max_retries):
+                try:
+                    response = chat.invoke(messages)
+                    break
+                except Exception as retry_error:
+                    error_str = str(retry_error)
+                    # Check for rate limiting
+                    is_rate_limit = any(keyword in error_str.lower() for keyword in [
+                        "too many requests",
+                        "too many connections",
+                        "throttlingexception",
+                        "throttling"
+                    ])
+                    if is_rate_limit and attempt < max_retries - 1:
+                        wait_time = (2 ** attempt) * 2
+                        print(f"Rate limited. Waiting {wait_time}s before retry...")
+                        time.sleep(wait_time)
+                    else:
+                        raise
+
+            # Add AI response to history
+            messages.append(response)
+
+            # Check if Claude wants to use tools
+            if hasattr(response, 'tool_calls') and response.tool_calls:
+                # Claude is requesting tool use
+                print(f"AI using {len(response.tool_calls)} tool(s)")
+
+                for tool_call in response.tool_calls:
+                    tool_name = tool_call['name']
+                    tool_input = tool_call['args']
+                    tool_use_id = tool_call['id']
+
+                    print(f"   Tool: {tool_name}({json.dumps(tool_input)})")
+
+                    # Execute the tool
+                    tool_result = execute_tool(tool_name, tool_input)
+
+                    # Add tool result to messages
+                    messages.append(ToolMessage(
+                        content=json.dumps(tool_result, indent=2),
+                        tool_call_id=tool_use_id
+                    ))
+
+                # Continue loop to get Claude's response after using tools
+                continue
+            else:
+                # No more tool calls - we have final response
+                ai_response = response.content
+
+                print(f"AI Response: {ai_response[:100]}...")
+
+                # Save conversation to DynamoDB
+                try:
+                    from db.src.models.conversation import Conversation
+
+                    # Create new conversation
+                    conv = Conversation.create_new(puuid)
+                    conv.add_message("user", user_message)
+                    conv.add_message("assistant", ai_response)
+                    conversation_repo.create_conversation(conv)
+
+                    print("Conversation saved to DynamoDB")
+                except Exception as db_error:
+                    print(f"Could not save conversation: {db_error}")
+
+                return jsonify({
+                    'response': ai_response,
+                    'status': 'success'
+                }), 200
+
+        # Max iterations reached
+        return jsonify({
+            'error': 'AI processing took too long',
+            'response': 'I apologize, but I need to simplify my analysis. Could you rephrase your question?'
+        }), 200
+
+    except Exception as e:
+        print(f"\nError in /api/coach: {e}")
+        traceback.print_exc()
+
+        return jsonify({
+            'error': 'Internal server error',
+            'message': str(e)
+        }), 500
 
 
 # ============================================================================

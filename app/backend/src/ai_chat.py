@@ -2,7 +2,20 @@ import os
 import time
 from dotenv import load_dotenv
 from langchain_aws import ChatBedrock
-from langchain_core.messages import SystemMessage, HumanMessage, AIMessage
+from langchain_core.messages import SystemMessage, HumanMessage, AIMessage, ToolMessage
+import boto3
+
+# Import our League of Legends tools
+from league_tools import TOOL_DEFINITIONS, execute_tool, set_player_puuid
+
+# Import conversation persistence modules
+from db.src.repositories.conversation_repository import ConversationRepository
+from db.src.models.conversation import Conversation
+
+# TODO: RAG Implementation
+# 1. Add vector DB client (AWS OpenSearch / FAISS)
+# 2. Add embedding model (Bedrock Titan Embeddings)
+# 3. Add retrieval functions (semantic search for past conversations & coaching knowledge)
 
 load_dotenv()
 
