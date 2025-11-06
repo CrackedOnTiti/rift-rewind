@@ -4,286 +4,347 @@ from io import BytesIO
 import aiohttp, asyncio
 
 class RewindExportProfil:
-    def __init__(self, player_name: str, champion_played: str, games_played: int, kd: float, lvl: int, story: str):
+    def __init__(self, player_name: str, champion_played: str, games_played: int, kd: float, lvl: int, rank: str, title: str, story: str):
         self.name = player_name
         self.champion_played = champion_played
         self.games_played = games_played
         self.kd = kd
         self.lvl = lvl
+        self.rank = rank
+        self.title = title
         self.story = story
 
-class RewindGeneration:
+class RewindCardGeneration:
     def __init__(self, profil: RewindExportProfil):
         self.profil = profil
         self.image = None
-        self.overlay = None
         self.draw = None
-        self.width = None
-        self.height = None
+        self.width = 356
+        self.height = 591
         self.fonts = {}
+        self.base_url = "https://raw.communitydragon.org/15.22/game/assets/characters"
     
-    async def get_champion_images(self) -> dict[str, str]:
+    async def get_champion_splash(self, champion_name: str) -> str:
+        champion_lower = champion_name.lower()
+        base_path = f"{self.base_url}/{champion_lower}/skins/base"
+        
+        possible_patterns = [
+            f"{champion_lower}_loadscreen.png",
+            f"{champion_lower}_loadscreen_0.png",
+            f"{champion_lower}_loadscreen_1.png",
+            f"{champion_lower}_loadscreen_2.png",
+            "loadscreen.png",
+            "loadscreen_0.png",
+            "loadscreen_1.png",
+        ]
+        
         async with aiohttp.ClientSession() as session:
-            async with session.get("https://ddragon.leagueoflegends.com/api/versions.json") as resp:
-                versions = await resp.json()
-                latest_version = versions[0]
-
-            async with session.get(f"https://ddragon.leagueoflegends.com/cdn/{latest_version}/data/en_US/champion.json") as resp:
-                data = await resp.json()
-                champions = data["data"]
-
-            splash_urls = {
-                champ_info["id"]: f"https://ddragon.leagueoflegends.com/cdn/img/champion/splash/{champ_info['id']}_0.jpg"
-                for champ_info in champions.values()
-            }
-
-        return splash_urls
-
-    def create_image(self, width: int = 1920, height: int = 1080, background_color=(0, 0, 0, 0)):
-        self.width = width
-        self.height = height
-        self.image = Image.new('RGBA', (width, height), background_color)
-        self.overlay = Image.new('RGBA', (width, height), (0, 0, 0, 0))
-        self.draw = ImageDraw.Draw(self.overlay)
+            for pattern in possible_patterns:
+                try:
+                    url = f"{base_path}/{pattern}"
+                    async with session.head(url, timeout=aiohttp.ClientTimeout(total=5)) as resp:
+                        if resp.status == 200:
+                            return url
+                except Exception as e:
+                    continue
+            
+            try:
+                async with session.get(base_path, timeout=aiohttp.ClientTimeout(total=5)) as resp:
+                    if resp.status == 200:
+                        content = await resp.text()
+                        import re
+                        loadscreen_files = re.findall(r'([\w_-]*loadscreen[\w_-]*\.png)', content, re.IGNORECASE)
+                        if loadscreen_files:
+                            first_file = loadscreen_files[0]
+                            return f"{base_path}/{first_file}"
+            except:
+                pass
+        return f"{base_path}/{champion_lower}_loadscreen.png"
+    
+    def get_rank_image_url(self, rank: str) -> str:
+        rank_mapping = {
+            "Iron": "https://static.wikia.nocookie.net/leagueoflegends/images/f/fe/Season_2022_-_Iron.png",
+            "Bronze": "https://static.wikia.nocookie.net/leagueoflegends/images/e/e9/Season_2022_-_Bronze.png",
+            "Silver": "https://static.wikia.nocookie.net/leagueoflegends/images/4/44/Season_2022_-_Silver.png",
+            "Gold": "https://static.wikia.nocookie.net/leagueoflegends/images/8/8d/Season_2022_-_Gold.png",
+            "Platinum": "https://static.wikia.nocookie.net/leagueoflegends/images/3/3b/Season_2022_-_Platinum.png",
+            "Emerald": "https://static.wikia.nocookie.net/leagueoflegends/images/d/d4/Season_2023_-_Emerald.png",
+            "Diamond": "https://static.wikia.nocookie.net/leagueoflegends/images/e/ee/Season_2022_-_Diamond.png",
+            "Master": "https://static.wikia.nocookie.net/leagueoflegends/images/e/eb/Season_2022_-_Master.png",
+            "Grandmaster": "https://static.wikia.nocookie.net/leagueoflegends/images/f/fc/Season_2022_-_Grandmaster.png",
+            "Challenger": "https://static.wikia.nocookie.net/leagueoflegends/images/0/02/Season_2022_-_Challenger.png"
+        }
+        
+        for rank_key, url in rank_mapping.items():
+            if rank_key.lower() in rank.lower():
+                return url
+        
+        return rank_mapping["Silver"]
+    
+    def create_base_card(self):
+        self.image = Image.new('RGBA', (self.width, self.height), (0, 0, 0, 255))
+        self.draw = ImageDraw.Draw(self.image)
         return self
     
-    def load_background(self, source):
-        if isinstance(source, tuple):
-            self.image = Image.new('RGB', (self.width, self.height), source)
-        elif source.startswith('http'):
-            response = urlopen(source)
-            self.image = Image.open(BytesIO(response.read()))
-        else:
-            self.image = Image.open(source)
-        
-        self.image = self.image.resize((self.width, self.height), Image.Resampling.LANCZOS)
-        self.image = self.image.convert('RGBA')
+    def load_fonts(self):
+        try:
+            self.fonts['title'] = ImageFont.truetype("arial.ttf", 16)
+            self.fonts['name'] = ImageFont.truetype("arial.ttf", 24)
+            self.fonts['subtitle'] = ImageFont.truetype("arial.ttf", 14)
+            self.fonts['story'] = ImageFont.truetype("arial.ttf", 11)
+            self.fonts['circle'] = ImageFont.truetype("arial.ttf", 20)
+            self.fonts['circle_label'] = ImageFont.truetype("arial.ttf", 10)
+            self.fonts['footer'] = ImageFont.truetype("arial.ttf", 9)
+        except:
+            default_font = ImageFont.load_default()
+            self.fonts['title'] = default_font
+            self.fonts['name'] = default_font
+            self.fonts['subtitle'] = default_font
+            self.fonts['story'] = default_font
+            self.fonts['circle'] = default_font
+            self.fonts['circle_label'] = default_font
+            self.fonts['footer'] = default_font
         return self
     
-    def add_gradient_overlay(self, opacity_start=80, opacity_end=160, side='left'):
-        gradient = Image.new('RGBA', (self.width, self.height))
-        draw = ImageDraw.Draw(gradient)
+    def draw_golden_border(self):
+        """Dessine la bordure dorée style LoL"""
+        gold = (218, 165, 32)
+        dark_gold = (139, 101, 8)
         
-        if side == 'left':
-            for x in range(self.width):
-                ratio = x / self.width
-                opacity = int(opacity_start * (1 - ratio) + opacity_end * ratio)
-                draw.line([(x, 0), (x, self.height)], fill=(5, 10, 25, opacity))
+        for i in range(5):
+            self.draw.rectangle(
+                [i, i, self.width - 1 - i, self.height - 1 - i],
+                outline=gold if i % 2 == 0 else dark_gold,
+                width=1
+            )
+        
+        corner_size = 15
+        for x, y in [(10, 10), (self.width - 10, 10), (10, self.height - 10), (self.width - 10, self.height - 10)]:
+            self.draw.rectangle([x - 3, y - 3, x + 3, y + 3], fill=gold)
+        
+        return self
+    
+    def draw_circle_stat(self, x: int, y: int, value: str, label: str, is_rank: bool = False):
+        gold = (218, 165, 32)
+        dark_bg = (20, 20, 30)
+        
+        radius = 30
+        
+        self.draw.ellipse([x - radius - 3, y - radius - 3, x + radius + 3, y + radius + 3], 
+                         fill=gold, outline=None)
+        self.draw.ellipse([x - radius, y - radius, x + radius, y + radius], 
+                         fill=dark_bg, outline=None)
+        
+        if is_rank:
+            try:
+                rank_url = self.get_rank_image_url(self.profil.rank)
+                response = urlopen(rank_url)
+                rank_img = Image.open(BytesIO(response.read()))
+                rank_size = int(radius * 1.5)
+                rank_img = rank_img.resize((rank_size, rank_size), Image.Resampling.LANCZOS)
+                rank_img = rank_img.convert('RGBA')
+                mask = Image.new('L', (rank_size, rank_size), 0)
+                mask_draw = ImageDraw.Draw(mask)
+                mask_draw.ellipse([0, 0, rank_size, rank_size], fill=255)
+                self.image.paste(rank_img, (x - rank_size // 2, y - rank_size // 2), mask)
+                self.draw = ImageDraw.Draw(self.image)
+            except Exception as e:
+                print(f"Erreur chargement image rang: {e}")
+                bbox = self.draw.textbbox((0, 0), value, font=self.fonts['circle'])
+                text_w = bbox[2] - bbox[0]
+                text_h = bbox[3] - bbox[1]
+                self.draw.text((x - text_w // 2, y - text_h // 2), value, 
+                              fill=gold, font=self.fonts['circle'])
         else:
+            bbox = self.draw.textbbox((0, 0), label, font=self.fonts['circle_label'])
+            text_w = bbox[2] - bbox[0]
+            text_h = bbox[3] - bbox[1]
+            self.draw.text((x - text_w // 2, y - 12), label, 
+                          fill=gold, font=self.fonts['circle_label'])
+            bbox = self.draw.textbbox((0, 0), value, font=self.fonts['circle'])
+            text_w = bbox[2] - bbox[0]
+            text_h = bbox[3] - bbox[1]
+            self.draw.text((x - text_w // 2, y + 2), value, 
+                          fill=gold, font=self.fonts['circle'])
+        
+        return self
+    
+    def add_champion_splash(self, champion_url: str):
+        try:
+            response = urlopen(champion_url)
+            champ_img = Image.open(BytesIO(response.read()))
+            img_width = self.width
+            img_height = self.height
+            
+            aspect_ratio = champ_img.width / champ_img.height
+            target_aspect = img_width / img_height
+            
+            if aspect_ratio > target_aspect:
+                new_height = img_height
+                new_width = int(new_height * aspect_ratio)
+                champ_img = champ_img.resize((new_width, new_height), Image.Resampling.LANCZOS)
+                crop_x = (new_width - img_width) // 2
+                champ_img = champ_img.crop((crop_x, 0, crop_x + img_width, img_height))
+            else:
+                new_width = img_width
+                new_height = int(new_width / aspect_ratio)
+                champ_img = champ_img.resize((new_width, new_height), Image.Resampling.LANCZOS)
+                crop_y = max(0, (new_height - img_height) // 4)  # Garder le haut
+                champ_img = champ_img.crop((0, crop_y, img_width, crop_y + img_height))
+            
+            champ_img = champ_img.convert('RGBA')
+            self.image.paste(champ_img, (0, 0))
+            self.draw = ImageDraw.Draw(self.image)
+            
+        except Exception as e:
+            print(f"Error: {e}")
             for y in range(self.height):
                 ratio = y / self.height
-                opacity = int(opacity_start * (1 - ratio) + opacity_end * ratio)
-                draw.line([(0, y), (self.width, y)], fill=(5, 10, 25, opacity))
-        
-        self.image = Image.alpha_composite(self.image, gradient)
-        return self
-    
-    def add_vignette(self, strength=100):
-        vignette = Image.new('RGBA', (self.width, self.height))
-        draw = ImageDraw.Draw(vignette)
-        
-        center_x, center_y = self.width // 2, self.height // 2
-        max_dist = ((center_x ** 2 + center_y ** 2) ** 0.5)
-        
-        for y in range(self.height):
-            for x in range(0, self.width, 5):
-                dist = ((x - center_x) ** 2 + (y - center_y) ** 2) ** 0.5
-                ratio = min(dist / max_dist, 1.0)
-                opacity = int(ratio * strength)
-                draw.line([(x, y), (x + 5, y)], fill=(0, 0, 0, opacity))
-        
-        self.image = Image.alpha_composite(self.image, vignette)
-        return self
-    
-    def is_drawable(self) -> bool:
-        return self.image is not None and self.draw is not None
-    
-    def load_font(self, name: str, size: int, font_path: str = "arial.ttf"):
-        try:
-            self.fonts[name] = ImageFont.truetype(font_path, size)
-        except:
-            self.fonts[name] = ImageFont.load_default()
-        return self
-    
-    def load_fonts_preset(self):
-        self.load_font('mega', 160)
-        self.load_font('title', 110)
-        self.load_font('large', 85)
-        self.load_font('normal', 70)
-        self.load_font('small', 55)
-        self.load_font('tiny', 42)
-        return self
-    
-    def draw_text(self, text: str, x: int, y: int, font_name: str = 'normal', 
-                  color=(255, 255, 255, 255), align='left', anchor=None, stroke_width=0, stroke_fill=None):
-        if not self.is_drawable():
-            raise ValueError("Image not init. Call create_image() first")
-        font = self.fonts.get(font_name)
-        if not font:
-            raise ValueError(f"Font '{font_name}' not load. Call load_font() first.")
-        
-        if align == 'center' or x == 'center':
-            bbox = self.draw.textbbox((0, 0), text, font=font)
-            text_width = bbox[2] - bbox[0]
-            x = (self.width - text_width) // 2
-        elif align == 'right':
-            bbox = self.draw.textbbox((0, 0), text, font=font)
-            text_width = bbox[2] - bbox[0]
-            x = x - text_width
-
-        self.draw.text((x, y), text, fill=color, font=font, anchor=anchor, 
-                      stroke_width=stroke_width, stroke_fill=stroke_fill)
-        return self
-    
-    def draw_centered_text(self, text: str, y: int, font_name: str = 'normal', 
-                          color=(255, 255, 255, 255), stroke_width=0, stroke_fill=None):
-        return self.draw_text(text, 0, y, font_name, color, align='center', 
-                            stroke_width=stroke_width, stroke_fill=stroke_fill)
-    
-    def draw_rectangle(self, x1: int, y1: int, x2: int, y2: int, 
-                      fill=(0, 0, 0, 128), outline=None, width=0):
-        if not self.is_drawable():
-            raise ValueError("Image not init")
-        self.draw.rectangle([x1, y1, x2, y2], fill=fill, outline=outline, width=width)
-        return self
-    
-    def draw_rounded_rectangle(self, x1: int, y1: int, x2: int, y2: int, 
-                              radius: int = 20, fill=(0, 0, 0, 128), outline=None, width=0):
-        if not self.is_drawable():
-            raise ValueError("Image not init")
-        self.draw.rounded_rectangle([x1, y1, x2, y2], radius=radius, 
-                                    fill=fill, outline=outline, width=width)
-        return self
-    
-    def draw_stat_card(self, x: int, y: int, width: int, height: int, 
-                      label: str, value: str, accent_color=(255, 215, 0)):
-        self.draw_rounded_rectangle(x, y, x + width, y + height, radius=25, 
-                                    fill=(10, 15, 30, 200))
-        
-        self.draw_rounded_rectangle(x, y, x + width, y + 10, radius=25, 
-                                    fill=(*accent_color, 255))
-        
-        self.draw_text(label, x + 30, y + 40, 'small', (180, 180, 180, 255))
-        
-        self.draw_text(value, x + 30, y + 100, 'large', accent_color + (255,), 
-                      stroke_width=2, stroke_fill=(0, 0, 0, 255))
+                color_val = int(40 + ratio * 20)
+                self.draw.line([(0, y), (self.width, y)], fill=(color_val, color_val, color_val + 20))
         
         return self
     
-    def add_image(self, image_source, x: int, y: int, width: int = None, height: int = None):
-        if isinstance(image_source, str):
-            if image_source.startswith('http'):
-                response = urlopen(image_source)
-                img = Image.open(BytesIO(response.read()))
+    def draw_info_section(self):
+        gold = (218, 165, 32)
+        
+        info_y = self.height - 170
+        info_height = 145
+        padding = 15
+        
+        overlay = Image.new('RGBA', (self.width, self.height), (0, 0, 0, 0))
+        overlay_draw = ImageDraw.Draw(overlay)
+        
+        dark_bg = (20, 25, 35, 220)
+        overlay_draw.rounded_rectangle(
+            [padding, info_y, self.width - padding, info_y + info_height],
+            radius=15,
+            fill=dark_bg
+        )
+        
+        self.image = Image.alpha_composite(self.image, overlay)
+        self.draw = ImageDraw.Draw(self.image)
+        
+        bbox = self.draw.textbbox((0, 0), self.profil.name, font=self.fonts['name'])
+        text_w = bbox[2] - bbox[0]
+        self.draw.text((self.width // 2 - text_w // 2, info_y + 20), 
+                      self.profil.name, fill=(255, 255, 255), font=self.fonts['name'])
+        
+        bbox = self.draw.textbbox((0, 0), self.profil.title, font=self.fonts['subtitle'])
+        text_w = bbox[2] - bbox[0]
+        self.draw.text((self.width // 2 - text_w // 2, info_y + 52), 
+                      self.profil.title, fill=gold, font=self.fonts['subtitle'])
+        
+        story_y = info_y + 77
+        max_width = self.width - 50
+        words = self.profil.story.split()
+        lines = []
+        current_line = []
+        
+        for word in words:
+            test_line = ' '.join(current_line + [word])
+            bbox = self.draw.textbbox((0, 0), test_line, font=self.fonts['story'])
+            if bbox[2] - bbox[0] <= max_width:
+                current_line.append(word)
             else:
-                img = Image.open(image_source)
-        else:
-            img = image_source
+                if current_line:
+                    lines.append(' '.join(current_line))
+                current_line = [word]
         
-        if width or height:
-            if width and height:
-                img = img.resize((width, height), Image.Resampling.LANCZOS)
-            elif width:
-                ratio = width / img.width
-                img = img.resize((width, int(img.height * ratio)), Image.Resampling.LANCZOS)
-            else:
-                ratio = height / img.height
-                img = img.resize((int(img.width * ratio), height), Image.Resampling.LANCZOS)
+        if current_line:
+            lines.append(' '.join(current_line))
         
-        img = img.convert('RGBA')
-        self.overlay.paste(img, (x, y), img)
+        lines = lines[:3]
+        
+        for i, line in enumerate(lines):
+            bbox = self.draw.textbbox((0, 0), line, font=self.fonts['story'])
+            text_w = bbox[2] - bbox[0]
+            self.draw.text((self.width // 2 - text_w // 2, story_y + i * 14), 
+                          line, fill=(220, 220, 220), font=self.fonts['story'])
+        
         return self
     
-    def merge_layers(self):
-        if self.image and self.overlay:
-            self.image = Image.alpha_composite(self.image, self.overlay)
+    def draw_header_and_footer(self):
+        gold = (218, 165, 32)
+        hot_pink = (255, 76, 154)
+        cyan = (0, 184, 217)
+        white = (255, 255, 255)
+        
+        header_text = "2025 REWIND"
+        bbox = self.draw.textbbox((0, 0), header_text, font=self.fonts['title'])
+        text_w = bbox[2] - bbox[0]
+        self.draw.text((self.width // 2 - text_w // 2, 15), 
+                      header_text, fill=gold, font=self.fonts['title'])
+        
+        footer_y = self.height - 20
+        
+        word1 = "Jinx's"
+        word2 = "Magical"
+        word3 = "Rewind Machine"
+        
+        bbox1 = self.draw.textbbox((0, 0), word1, font=self.fonts['footer'])
+        w1 = bbox1[2] - bbox1[0]
+        
+        bbox2 = self.draw.textbbox((0, 0), " " + word2, font=self.fonts['footer'])
+        w2 = bbox2[2] - bbox2[0]
+        
+        bbox3 = self.draw.textbbox((0, 0), " " + word3, font=self.fonts['footer'])
+        w3 = bbox3[2] - bbox3[0]
+        
+        total_width = w1 + w2 + w3
+        start_x = (self.width - total_width) // 2
+        current_x = start_x
+        self.draw.text((current_x, footer_y), word1, fill=hot_pink, font=self.fonts['footer'])
+        current_x += w1
+        self.draw.text((current_x, footer_y), " " + word2, fill=cyan, font=self.fonts['footer'])
+        current_x += w2
+        self.draw.text((current_x, footer_y), " " + word3, fill=white, font=self.fonts['footer'])
+        
         return self
     
     def save(self, filename: str):
-        if not self.image:
-            raise ValueError("No image to save")
-        
-        self.merge_layers()
         self.image.save(filename, 'PNG')
         return self
     
-    async def image_creation_async(self) -> bool:
+    async def create_card_async(self) -> bool:
         try:
-            champion_images = await self.get_champion_images()
-            champion_url = champion_images.get(self.profil.champion_played)
+            champion_url = await self.get_champion_splash(self.profil.champion_played)
             
-            self.create_image(1920, 1080)
-            
-            if champion_url:
-                self.load_background(champion_url)
-                self.add_gradient_overlay(opacity_start=120, opacity_end=30, side='left')
-                self.add_vignette(strength=80)
-            else:
-                self.load_background((15, 25, 40))
-            
-            self.load_fonts_preset()
-            
-            self.draw_text("YOUR 2025", 70, 50, 'large', (255, 215, 0, 255), 
-                          stroke_width=4, stroke_fill=(0, 0, 0, 255))
-            self.draw_text("LOL REWIND", 70, 150, 'mega', (255, 215, 0, 255),
-                          stroke_width=5, stroke_fill=(0, 0, 0, 255))
-            
-            self.draw_rounded_rectangle(60, 330, 700, 460, radius=30, fill=(10, 15, 30, 220))
-            self.draw_text(f"{self.profil.name}", 90, 360, 'title', (255, 255, 255, 255),
-                          stroke_width=3, stroke_fill=(0, 0, 0, 200))
-            
-            champ_y = 490
-            self.draw_rounded_rectangle(60, champ_y, 700, champ_y + 140, radius=30, fill=(30, 20, 50, 220))
-            self.draw_text("FAVORITE CHAMPION", 90, champ_y + 25, 'small', (255, 215, 0, 255))
-            self.draw_text(f"{self.profil.champion_played}", 90, champ_y + 75, 'title', (255, 255, 255, 255),
-                          stroke_width=3, stroke_fill=(0, 0, 0, 200))
-            
-            stats_y = 670
-            card_width = 260
-            card_height = 200
-            spacing = 50
-            start_x = 60
-            
-            self.draw_stat_card(start_x, stats_y, card_width, card_height, 
-                              "GAMES PLAYED", f"{self.profil.games_played}", (100, 200, 255))
-            
-            self.draw_stat_card(start_x + card_width + spacing, stats_y, card_width, card_height,
-                              "K/D RATIO", f"{self.profil.kd}", (150, 255, 150))
-            
-            self.draw_stat_card(start_x + (card_width + spacing) * 2, stats_y, card_width, card_height,
-                              "LEVEL", f"{self.profil.lvl}", (255, 150, 150))
-            
-            story_y = 910
-            self.draw_rounded_rectangle(60, story_y, 900, story_y + 130, radius=30, fill=(10, 15, 30, 220))
-            self.draw_text("YOUR STORY", 90, story_y + 25, 'small', (255, 215, 0, 255))
-            self.draw_text(self.profil.story, 90, story_y + 75, 'tiny', (230, 230, 230, 255))
-            
-            self.draw_text("League of Legends © Riot Games", self.width - 450, self.height - 50, 
-                          'tiny', (150, 150, 150, 180))
-            
-            self.save(f"{self.profil.name}_rewind_2025.png")
-            print(f"Image created: {self.profil.name}_rewind_2025.png (1920x1080)")
+            self.create_base_card()
+            self.add_champion_splash(champion_url)
+            self.load_fonts()
+            self.draw_golden_border()
+            self.draw_header_and_footer()
+            left_circle_x = 50
+            right_circle_x = self.width - 50
+            circle_y = 50
+            self.draw_circle_stat(left_circle_x, circle_y, str(self.profil.lvl), "LVL")
+            self.draw_circle_stat(right_circle_x, circle_y, self.profil.rank, "RANK", is_rank=True)
+            self.draw_info_section()
+            filename = f"{self.profil.name}_rewind_card.png"
+            self.save(filename)
             return True
-
         except Exception as e:
             print(f"Error: {e}")
             return False
     
-    def image_creation(self) -> bool:
-        return asyncio.run(self.image_creation_async())
+    def create_card(self) -> bool:
+        return asyncio.run(self.create_card_async())
+
 
 def main():
-    print("Generating LOL Rewind ...")
     profil = RewindExportProfil(
-        player_name="Faker", 
-        champion_played="Ahri", 
+        player_name="Faker",
+        champion_played="Ahri",
         games_played=342,
-        kd=4.2, 
-        lvl=287, 
-        story="The legend continues with style and precision."
+        kd=4.2,
+        lvl=287,
+        rank="Silver",
+        title="The Unkillable Demon King",
+        story="The legend continues with style and precision across the Rift"
     )
-    rewind = RewindGeneration(profil)
-    rewind.image_creation()
+    generator = RewindCardGeneration(profil)
+    generator.create_card()
 
-if __name__=="__main__":
+if __name__ == "__main__":
     main()
