@@ -17,6 +17,12 @@ from API.models.player import Player
 from API.analytics.zones.zone_analyzer import analyze_player_zones
 from API.story.story_generator import generate_all_stories
 
+# Import AI chat functionality
+from app.backend.src.ai_chat import create_chat, SYSTEM_PROMPT, set_player_puuid
+from app.backend.src.league_tools import TOOL_DEFINITIONS, execute_tool
+from langchain_core.messages import SystemMessage, HumanMessage, AIMessage, ToolMessage
+import json
+
 # Check if we should use mock DB
 USE_MOCK_DB = os.getenv('USE_MOCK_DB', 'false').lower() == 'true'
 
@@ -38,9 +44,13 @@ else:
         get_all_stories, store_all_stories, is_story_fresh, delete_all_stories, get_story, check_story_mode
     )
     from db.src.repositories.player_repository import PlayerRepository
+    from db.src.repositories.session_repository import SessionRepository
+    from db.src.repositories.conversation_repository import ConversationRepository
     from db.src.db_handshake import get_dynamodb_reasources
     dynamodb = get_dynamodb_reasources()
     player_repo = PlayerRepository(dynamodb)
+    session_repo = SessionRepository(dynamodb)
+    conversation_repo = ConversationRepository(dynamodb)
 
 app = Flask(__name__)
 CORS(app)
