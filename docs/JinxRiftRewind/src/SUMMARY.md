@@ -21,12 +21,9 @@
 
 - [Using RiftRewind]()
     - [Getting Started](./getting-started.md)
-    - [User Guide](./user-guide.md)
 
 - [Project Journey]()
     - [Challenges & Learnings](./challenges.md)
-    - [Future Roadmap](./roadmap.md)
 
 - [Additional Info]()
     - [Team & Credits](./team.md)
-    - [Contributing](./contributing.md)
