@@ -27,7 +27,7 @@ let mapState = {
 
 const ZONE_PROXIMITY_THRESHOLD = 150; // pixels - how close to be to interact with zone
 const CHARACTER_SPEED = 400; // pixels per second
-const CAMERA_SMOOTHNESS = 0.3; // seconds for camera follow
+const CAMERA_SMOOTHNESS = 0.1; // seconds for camera follow
 
 // ============================================================================
 // INITIALIZATION

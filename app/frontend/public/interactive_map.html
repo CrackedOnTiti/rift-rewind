@@ -44,17 +44,18 @@
                 cursor: crosshair;
                 z-index: 1;
                 background: #000;
+                display: flex;
+                align-items: center;
+                justify-content: center;
             }
 
-            /* The map image itself - heavily zoomed in like in-game */
+            /* The map image itself - contains entire map on all screen sizes */
             .map-image {
                 position: absolute;
-                top: 0;
-                left: 0;
-                width: 100vw;
-                height: 100vh;
-                object-fit: cover;
-                transform-origin: top left;
+                width: 100%;
+                height: 100%;
+                object-fit: contain; /* Changed from cover to contain - shows full map */
+                transform-origin: center center; /* Changed from top left to center */
                 image-rendering: -webkit-optimize-contrast;
                 image-rendering: crisp-edges;
             }
@@ -66,12 +67,9 @@
             /* Zones container - follows map transformations */
             #zonesContainer {
                 position: absolute;
-                top: 0;
-                left: 0;
-                width: 100vw;
-                height: 100vh;
                 pointer-events: none;
-                transform-origin: top left;
+                transform-origin: center center; /* Match the map image */
+                /* Dimensions will be set by JavaScript to match actual map size */
             }
 
             /* Individual zone overlay - small circles */
@@ -943,8 +941,8 @@
 
             // Camera system state
             let camera = {
-                x: 0.0, // Current X position (0 = left, 1 = right) - Starts bottom-left like blue side!
-                y: 1.0, // Current Y position (0 = top, 1 = bottom)
+                x: 0.0, // Current X position (0 = left, 0.5 = center, 1 = right) - Starts bottom-left like blue side!
+                y: 1.0, // Current Y position (0 = top, 0.5 = center, 1 = bottom)
                 zoom: 3.5, // Zoom level re-enabled! Zones positioned correctly
                 speed: 0.003, // Movement speed (percentage per frame)
                 edgeThreshold: 50, // Distance from edge to trigger scroll (pixels)
@@ -989,13 +987,27 @@
 
             // Main initialization function
             function initializePage() {
-                console.log("🗺️ Interactive Map Loading...");
+                console.log("Interactive Map Loading...");
 
                 loadPlayerData();
                 displayPlayerInfo();
-                setupCameraSystem();
-                createZones();
-                createHiddenBombs();
+
+                // Wait for map image to load before setting up zones
+                const mapImage = document.getElementById("mapImage");
+                if (mapImage.complete) {
+                    // Image already loaded
+                    setupCameraSystem();
+                    createZones();
+                    createHiddenBombs();
+                } else {
+                    // Wait for image to load
+                    mapImage.addEventListener("load", () => {
+                        setupCameraSystem();
+                        createZones();
+                        createHiddenBombs();
+                    });
+                }
+
                 checkTutorialPreference();
             }
 
@@ -1108,12 +1120,66 @@
 
             // Sets up the camera system
             function setupCameraSystem() {
-                console.log("📹 Setting up camera system...");
+                console.log("Setting up camera system...");
 
                 trackMousePosition();
+                setupMouseWheelZoom();
                 startCameraLoop();
+                updateZonesContainerSize(); // Initial sizing
+                setupResizeListener(); // Update on window resize
 
-                console.log("✅ Camera system ready!");
+                console.log("Camera system ready!");
+            }
+
+            // Calculates and sets the zones container to match actual map image size
+            function updateZonesContainerSize() {
+                const mapImage = document.getElementById("mapImage");
+                const zonesContainer = document.getElementById("zonesContainer");
+                const mapContainer = document.querySelector(".map-container");
+
+                // Get the natural dimensions of the image
+                const naturalWidth = mapImage.naturalWidth;
+                const naturalHeight = mapImage.naturalHeight;
+
+                // Get the container dimensions
+                const containerWidth = mapContainer.clientWidth;
+                const containerHeight = mapContainer.clientHeight;
+
+                // Calculate the actual rendered size (accounting for object-fit: contain)
+                const imageAspect = naturalWidth / naturalHeight;
+                const containerAspect = containerWidth / containerHeight;
+
+                let renderedWidth, renderedHeight, offsetX, offsetY;
+
+                if (containerAspect > imageAspect) {
+                    // Container is wider than image - image will be pillarboxed (black bars on sides)
+                    renderedHeight = containerHeight;
+                    renderedWidth = renderedHeight * imageAspect;
+                    offsetX = (containerWidth - renderedWidth) / 2;
+                    offsetY = 0;
+                } else {
+                    // Container is taller than image - image will be letterboxed (black bars on top/bottom)
+                    renderedWidth = containerWidth;
+                    renderedHeight = renderedWidth / imageAspect;
+                    offsetX = 0;
+                    offsetY = (containerHeight - renderedHeight) / 2;
+                }
+
+                // Set zones container to match the actual map image size and position
+                zonesContainer.style.width = renderedWidth + "px";
+                zonesContainer.style.height = renderedHeight + "px";
+                zonesContainer.style.left = offsetX + "px";
+                zonesContainer.style.top = offsetY + "px";
+
+                console.log(`Zones container sized: ${renderedWidth}x${renderedHeight} at (${offsetX}, ${offsetY})`);
+            }
+
+            // Sets up listener for window resize to update zones container
+            function setupResizeListener() {
+                window.addEventListener("resize", () => {
+                    updateZonesContainerSize();
+                    console.log("Window resized, zones container updated");
+                });
             }
 
             // Tracks mouse position on the screen
@@ -1122,6 +1188,47 @@
                     mouse.x = event.clientX;
                     mouse.y = event.clientY;
                 });
+            }
+
+            // Handles mouse wheel zoom centered on cursor
+            function setupMouseWheelZoom() {
+                const MIN_ZOOM = 1.5;
+                const MAX_ZOOM = 6.0;
+                const ZOOM_SPEED = 0.15;
+
+                document.addEventListener('wheel', (event) => {
+                    event.preventDefault();
+
+                    const screenWidth = window.innerWidth;
+                    const screenHeight = window.innerHeight;
+
+                    // Calculate cursor position as percentage of screen (centered)
+                    const cursorScreenX = (mouse.x / screenWidth) - 0.5; // -0.5 to 0.5
+                    const cursorScreenY = (mouse.y / screenHeight) - 0.5; // -0.5 to 0.5
+
+                    // Calculate where cursor points to in map space (before zoom)
+                    const extraWidth = screenWidth * (camera.zoom - 1);
+                    const extraHeight = screenHeight * (camera.zoom - 1);
+                    const cursorMapX = (camera.x - 0.5) + (cursorScreenX * extraWidth) / screenWidth;
+                    const cursorMapY = (camera.y - 0.5) + (cursorScreenY * extraHeight) / screenHeight;
+
+                    // Update zoom level
+                    const oldZoom = camera.zoom;
+                    const zoomDelta = event.deltaY > 0 ? -ZOOM_SPEED : ZOOM_SPEED;
+                    camera.zoom = Math.max(MIN_ZOOM, Math.min(MAX_ZOOM, camera.zoom + zoomDelta));
+
+                    // Adjust camera position to keep cursor point fixed (center-based)
+                    const newExtraWidth = screenWidth * (camera.zoom - 1);
+                    const newExtraHeight = screenHeight * (camera.zoom - 1);
+
+                    camera.x = 0.5 + cursorMapX - (cursorScreenX * newExtraWidth) / screenWidth;
+                    camera.y = 0.5 + cursorMapY - (cursorScreenY * newExtraHeight) / screenHeight;
+
+                    // Keep camera within bounds
+                    camera.x = Math.max(0, Math.min(1, camera.x));
+                    camera.y = Math.max(0, Math.min(1, camera.y));
+
+                }, { passive: false });
             }
 
             // Starts the camera update loop
@@ -1172,7 +1279,7 @@
                     document.getElementById("zonesContainer");
 
                 // Calculate how much to translate based on zoom and camera position
-                // When zoomed in 3.5x, we can pan across the "extra" space
+                // When zoomed in, we can pan across the "extra" space
                 const screenWidth = window.innerWidth;
                 const screenHeight = window.innerHeight;
 
@@ -1180,9 +1287,11 @@
                 const extraWidth = screenWidth * (camera.zoom - 1);
                 const extraHeight = screenHeight * (camera.zoom - 1);
 
-                // Translate based on camera position
-                const translateX = -camera.x * extraWidth;
-                const translateY = -camera.y * extraHeight;
+                // Translate based on camera position (centered origin)
+                // Camera position 0.5, 0.5 = center (no translation)
+                // Adjust translation to work with center origin
+                const translateX = -(camera.x - 0.5) * extraWidth;
+                const translateY = -(camera.y - 0.5) * extraHeight;
 
                 const transform = `scale(${camera.zoom}) translate(${translateX / camera.zoom}px, ${translateY / camera.zoom}px)`;
 
