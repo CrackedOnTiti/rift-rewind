@@ -8,10 +8,6 @@ RiftRewind offers two main experiences, each designed to help you improve in dif
 
 Navigate an interactive Summoner's Rift map with clickable icons at each lane and objective. Get specific, targeted feedback on:
 
-<div style="text-align: center;">
-  <img src="images/rewindbackground.png" alt="Interactive Rewind Map" />
-</div>
-
 - **Lane Performance** - How you're doing in Top, Mid, Bot, Jungle, or Support
 - **Objective Control** - Your Dragon and Baron play
 - **Map Awareness** - Positioning and roaming patterns

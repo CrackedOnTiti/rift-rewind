@@ -6,6 +6,10 @@
 
 Ignite the Rewind transforms your match data into an interactive visual experience. Instead of scrolling through tables of statistics, you explore Summoner's Rift itself, clicking on specific areas to get targeted feedback.
 
+<div style="text-align: center;">
+  <img src="images/rewindbackground.png" alt="Interactive Rewind Map" />
+</div>
+
 ## How It Works
 
 ### 1. Map Navigation
