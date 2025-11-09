@@ -558,6 +558,20 @@ def generate_zone_story_endpoint(riot_id, zone_id):
             if zone_stats and isinstance(zone_stats, dict) and len(zone_stats) > 2:  # More than just zone_id and zone_name
                 print(f"  Generating story using cached stats (fast: ~1-2s)")
                 print(f"  Stats keys: {list(zone_stats.keys())}")
+
+                # For lane zones, verify there's actual lane_performance data
+                if zone_id in ['top_lane', 'mid_lane', 'bot_lane']:
+                    lane_perf = zone_stats.get('lane_performance', {})
+                    matches_in_role = zone_stats.get('matches_played_in_role', 0)
+
+                    if not lane_perf or matches_in_role == 0:
+                        print(f"  WARNING: No lane performance data for {zone_id}")
+                        return jsonify({
+                            'error': f'Not enough data for {zone_stats.get("zone_name", zone_id)}. You haven\'t played enough matches in this lane recently. Try exploring other zones or play more games!',
+                            'zone_id': zone_id,
+                            'error_type': 'no_data'
+                        }), 404
+
                 from API.story.story_generator import generate_zone_story
 
                 try:
@@ -596,12 +610,13 @@ def generate_zone_story_endpoint(riot_id, zone_id):
                         'generated_at': int(time.time())
                     }), 200
                 else:
-                    # AI generation failed - return error
-                    print(f"  ERROR: AI failed to generate story for {zone_id}")
+                    # AI generation returned None - likely insufficient data
+                    print(f"  ERROR: Story generation returned None for {zone_id}")
                     return jsonify({
-                        'error': f'AI story generation failed for zone {zone_id}. Please try again.',
-                        'zone_id': zone_id
-                    }), 500
+                        'error': f'Not enough data for {zone_stats.get("zone_name", zone_id)}. You haven\'t played enough matches in this area recently. Try exploring other zones or play more games!',
+                        'zone_id': zone_id,
+                        'error_type': 'no_data'
+                    }), 404
             else:
                 # Stats are empty or invalid - fall through to fetch from API
                 print(f"  WARNING: Stats are empty or invalid for {zone_id}, will fetch from Riot API")
@@ -682,6 +697,15 @@ def generate_zone_story_endpoint(riot_id, zone_id):
                     'zone_id': zone_id,
                     'retry_after': 10
                 }), 429
+
+            # Check if it's a "no data" error
+            if "No statistics available" in error or "not have enough data" in error:
+                return jsonify({
+                    'error': error,
+                    'zone_id': zone_id,
+                    'error_type': 'no_data'
+                }), 404
+
             return jsonify({'error': error}), 500
 
         return jsonify(result), 200

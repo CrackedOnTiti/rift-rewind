@@ -53,21 +53,21 @@ def create_bedrock_client():
     return chat
 
 
-def generate_story(prompt, zone_id=None, mode='coach'):
+def invoke_with_retry(chat, messages, context=""):
     """
-    Generate zone story using Bedrock AI.
+    Shared retry wrapper for Bedrock API calls with exponential backoff.
+
+    Args:
+        chat: Bedrock chat client
+        messages: List of messages to send
+        context: Description of what's being generated (for error messages)
+
+    Returns:
+        Response content string
+
+    Raises:
+        Exception: RATE_LIMIT_ERROR if rate limited after all retries
     """
-    if USE_MOCK:
-        print(f"[MOCK MODE] Using mock AI responses in {mode.upper()} mode")
-        return generate_mock_story(zone_id or "default", mode=mode)
-
-    chat = create_bedrock_client()
-
-    messages = [
-        SystemMessage(content=STORY_SYSTEM_PROMPT),
-        HumanMessage(content=prompt)
-    ]
-
     max_retries = 5
     for attempt in range(max_retries):
         try:
@@ -91,7 +91,7 @@ def generate_story(prompt, zone_id=None, mode='coach'):
                 print(f"Rate limited. Waiting {wait_time}s before retry (attempt {attempt + 1}/{max_retries})...")
                 time.sleep(wait_time)
             else:
-                print(f"ERROR: AI story generation failed for zone {zone_id}")
+                print(f"ERROR: AI generation failed for {context}")
                 print(f"Error type: {type(retry_error).__name__}")
                 print(f"Error message: {error_str}")
 
@@ -103,5 +103,23 @@ def generate_story(prompt, zone_id=None, mode='coach'):
                 traceback.print_exc()
                 return None
 
-    print(f"ERROR: AI story generation failed after {max_retries} retries for zone {zone_id}")
+    print(f"ERROR: AI generation failed after {max_retries} retries for {context}")
     raise Exception("RATE_LIMIT_ERROR: Too many requests to AI service. Please wait a moment and try again.")
+
+
+def generate_story(prompt, zone_id=None, mode='coach'):
+    """
+    Generate zone story using Bedrock AI.
+    """
+    if USE_MOCK:
+        print(f"[MOCK MODE] Using mock AI responses in {mode.upper()} mode")
+        return generate_mock_story(zone_id or "default", mode=mode)
+
+    chat = create_bedrock_client()
+
+    messages = [
+        SystemMessage(content=STORY_SYSTEM_PROMPT),
+        HumanMessage(content=prompt)
+    ]
+
+    return invoke_with_retry(chat, messages, context=f"zone {zone_id}")
