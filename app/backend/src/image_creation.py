@@ -176,20 +176,20 @@ class RewindCardGeneration:
     def draw_circle_stat(self, x: int, y: int, value: str, label: str, is_rank: bool = False):
         gold = (218, 165, 32)
         dark_bg = (20, 20, 30)
-        
-        radius = 30
-        
-        self.draw.ellipse([x - radius - 3, y - radius - 3, x + radius + 3, y + radius + 3], 
+
+        radius = 40
+
+        self.draw.ellipse([x - radius - 3, y - radius - 3, x + radius + 3, y + radius + 3],
                          fill=gold, outline=None)
-        self.draw.ellipse([x - radius, y - radius, x + radius, y + radius], 
+        self.draw.ellipse([x - radius, y - radius, x + radius, y + radius],
                          fill=dark_bg, outline=None)
-        
+
         if is_rank:
             try:
                 rank_url = self.get_rank_image_url(self.profil.rank)
                 response = urlopen(rank_url)
                 rank_img = Image.open(BytesIO(response.read()))
-                rank_size = int(radius * 1.5)
+                rank_size = int(radius * 1.8)
                 rank_img = rank_img.resize((rank_size, rank_size), Image.Resampling.LANCZOS)
                 rank_img = rank_img.convert('RGBA')
                 mask = Image.new('L', (rank_size, rank_size), 0)
@@ -202,20 +202,31 @@ class RewindCardGeneration:
                 bbox = self.draw.textbbox((0, 0), value, font=self.fonts['circle'])
                 text_w = bbox[2] - bbox[0]
                 text_h = bbox[3] - bbox[1]
-                self.draw.text((x - text_w // 2, y - text_h // 2), value, 
+                self.draw.text((x - text_w // 2, y - text_h // 2), value,
                               fill=gold, font=self.fonts['circle'])
         else:
-            bbox = self.draw.textbbox((0, 0), label, font=self.fonts['circle_label'])
-            text_w = bbox[2] - bbox[0]
-            text_h = bbox[3] - bbox[1]
-            self.draw.text((x - text_w // 2, y - 12), label, 
+            # Get bounding boxes for label and value
+            bbox_label = self.draw.textbbox((0, 0), label, font=self.fonts['circle_label'])
+            label_w = bbox_label[2] - bbox_label[0]
+            label_h = bbox_label[3] - bbox_label[1]
+            label_offset_x = bbox_label[0]  # Account for font offset
+
+            bbox_value = self.draw.textbbox((0, 0), value, font=self.fonts['circle'])
+            value_w = bbox_value[2] - bbox_value[0]
+            value_h = bbox_value[3] - bbox_value[1]
+            value_offset_x = bbox_value[0]  # Account for font offset
+
+            total_height = label_h + value_h + 4
+
+            # Center text properly by accounting for bounding box offset
+            label_x = x - (label_w // 2) - label_offset_x
+            value_x = x - (value_w // 2) - value_offset_x
+
+            self.draw.text((label_x, y - total_height // 2), label,
                           fill=gold, font=self.fonts['circle_label'])
-            bbox = self.draw.textbbox((0, 0), value, font=self.fonts['circle'])
-            text_w = bbox[2] - bbox[0]
-            text_h = bbox[3] - bbox[1]
-            self.draw.text((x - text_w // 2, y + 2), value, 
+            self.draw.text((value_x, y - total_height // 2 + label_h + 4), value,
                           fill=gold, font=self.fonts['circle'])
-        
+
         return self
     
     def add_champion_splash(self, champion_url: str):
