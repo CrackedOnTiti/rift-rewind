@@ -1527,11 +1527,20 @@
                             body: JSON.stringify({ storyMode: storyMode })
                         });
 
-                        if (!response.ok) {
-                            throw new Error(`Failed to generate story: ${response.statusText}`);
-                        }
-
                         const result = await response.json();
+
+                        if (!response.ok) {
+                            // Handle different error types with proper messages
+                            if (response.status === 404 && result.error_type === 'no_data') {
+                                // No data error - show friendly message
+                                throw new Error(result.error || 'Not enough data for this zone. You haven\'t played enough matches in this area recently. Try exploring other zones or play more games!');
+                            } else if (response.status === 429) {
+                                // Rate limit error
+                                throw new Error(result.error || 'Too many requests. Please wait a moment and try again.');
+                            }
+                            // Generic error - use backend's error message if available
+                            throw new Error(result.error || `Failed to generate story: ${response.statusText}`);
+                        }
                         console.log(`✅ Story generated for ${zoneId}`);
 
                         // Update zoneData with new story
@@ -1550,7 +1559,8 @@
 
                     } catch (error) {
                         console.error(`❌ Error generating story for ${zoneId}:`, error);
-                        showModal(zoneName, `Failed to generate story: ${error.message}\n\nPlease try again or refresh the page.`, emoji);
+                        // Display error message directly (it already includes context)
+                        showModal(zoneName, `${error.message}\n\nPlease try again or refresh the page.`, emoji);
                     }
                 } else {
                     // Story exists in cache, show it

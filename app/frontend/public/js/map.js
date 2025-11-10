@@ -468,6 +468,14 @@ async function handleZoneClick(zoneId, zoneElement) {
         const data = await response.json();
 
         if (!response.ok) {
+            // Handle different error types
+            if (response.status === 404 && data.error_type === 'no_data') {
+                // No data error - show friendly message
+                throw new Error('Not enough data for this zone. You haven\'t played enough matches in this area recently. Try exploring other zones or play more games!');
+            } else if (response.status === 429) {
+                // Rate limit error
+                throw new Error('Too many requests. Please wait a moment and try again.');
+            }
             throw new Error(data.error || 'Failed to generate story');
         }
 
@@ -490,7 +498,7 @@ async function handleZoneClick(zoneId, zoneElement) {
     } catch (error) {
         console.error('Error generating story:', error);
         closeModal();
-        alert(`Failed to generate story: ${error.message}`);
+        alert(error.message);
     }
 }
 
@@ -654,7 +662,7 @@ function setupEventListeners() {
 }
 
 function setupKeyboardControls() {
-    const moveSpeed = 100;
+    const baseMoveSpeed = 100;
 
     document.addEventListener('keydown', (e) => {
         // ESC to close modal
@@ -680,30 +688,38 @@ function setupKeyboardControls() {
             case 'ArrowUp':
             case 'w':
             case 'W':
-                dy = -moveSpeed;
+                dy = -baseMoveSpeed;
                 break;
             case 'ArrowDown':
             case 's':
             case 'S':
-                dy = moveSpeed;
+                dy = baseMoveSpeed;
                 break;
             case 'ArrowLeft':
             case 'a':
             case 'A':
-                dx = -moveSpeed;
+                dx = -baseMoveSpeed;
                 break;
             case 'ArrowRight':
             case 'd':
             case 'D':
-                dx = moveSpeed;
+                dx = baseMoveSpeed;
                 break;
             default:
                 return;
         }
 
         e.preventDefault();
-        console.log(`Keyboard: Moving character by dx=${dx}, dy=${dy}`);
-        moveCharacterTo(character.x + dx, character.y + dy);
+
+        // Adjust movement speed based on zoom level
+        // When zoomed out (zoom < 1), move faster to cover same visual distance
+        // When zoomed in (zoom > 1), move slower for finer control
+        const zoomAdjustedSpeed = 1 / camera.zoom;
+        const adjustedDx = dx * zoomAdjustedSpeed;
+        const adjustedDy = dy * zoomAdjustedSpeed;
+
+        console.log(`Keyboard: Moving character by dx=${adjustedDx.toFixed(1)}, dy=${adjustedDy.toFixed(1)} (zoom: ${camera.zoom.toFixed(2)})`);
+        moveCharacterTo(character.x + adjustedDx, character.y + adjustedDy);
     });
 }
 

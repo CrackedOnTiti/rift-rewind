@@ -2,9 +2,8 @@
 Generate personalized titles and stories for player cards using AI.
 """
 
-from .bedrock_client import create_bedrock_client
+from .bedrock_client import create_bedrock_client, invoke_with_retry
 from langchain_core.messages import SystemMessage, HumanMessage
-import time
 import os
 import json
 
@@ -107,54 +106,42 @@ Remember to respond ONLY with valid JSON in the format specified in the system p
             HumanMessage(content=prompt)
         ]
 
-        # Retry logic
-        max_retries = 3
-        for attempt in range(max_retries):
-            try:
-                response = chat.invoke(messages)
-                result_text = response.content.strip()
+        # Use shared retry logic from bedrock_client
+        result_text = invoke_with_retry(chat, messages, context="player card")
 
-                # Parse JSON response
-                import json
+        if not result_text:
+            return None
 
-                # Clean up response if it contains markdown code blocks
-                if '```json' in result_text:
-                    result_text = result_text.split('```json')[1].split('```')[0].strip()
-                elif '```' in result_text:
-                    result_text = result_text.split('```')[1].split('```')[0].strip()
+        # Parse JSON response
+        # Clean up response if it contains markdown code blocks
+        if '```json' in result_text:
+            result_text = result_text.split('```json')[1].split('```')[0].strip()
+        elif '```' in result_text:
+            result_text = result_text.split('```')[1].split('```')[0].strip()
 
-                result = json.loads(result_text)
+        result = json.loads(result_text)
 
-                # Validate response format
-                if 'title' in result and 'story' in result:
-                    # Ensure story is not too long (max 150 chars)
-                    if len(result['story']) > 150:
-                        result['story'] = result['story'][:147] + '...'
+        # Validate response format
+        if 'title' in result and 'story' in result:
+            # Ensure story is not too long (max 150 chars)
+            if len(result['story']) > 150:
+                result['story'] = result['story'][:147] + '...'
 
-                    print(f"Generated card content: '{result['title']}' in {story_mode.upper()} mode")
-                    return result
-                else:
-                    print(f"Invalid response format: {result}")
-                    return None
+            print(f"Generated card content: '{result['title']}' in {story_mode.upper()} mode")
+            return result
+        else:
+            print(f"Invalid response format: {result}")
+            return None
 
-            except json.JSONDecodeError as e:
-                print(f"JSON parsing error: {e}")
-                print(f"Raw response: {result_text}")
-                # Fallback to defaults if JSON parsing fails
-                return None
-
-            except Exception as retry_error:
-                if "Too many connections" in str(retry_error) and attempt < max_retries - 1:
-                    wait_time = 2 ** attempt
-                    print(f"Rate limited. Waiting {wait_time}s before retry...")
-                    time.sleep(wait_time)
-                else:
-                    print(f"Error generating card content: {retry_error}")
-                    return None
-
+    except json.JSONDecodeError as e:
+        print(f"JSON parsing error: {e}")
+        print(f"Raw response: {result_text}")
         return None
 
     except Exception as e:
+        # Re-raise rate limit errors so they can be handled properly by the caller
+        if "RATE_LIMIT_ERROR" in str(e):
+            raise
         print(f"Error in generate_card_content: {e}")
         return None
 
@@ -164,11 +151,19 @@ def generate_card_content_with_fallback(player_stats, story_mode='coach'):
     Generate card content with AI, falling back to defaults if it fails.
 
     This ensures we always return something, even if AI generation fails.
+    Rate limit errors are re-raised to be handled by the caller.
     """
-    result = generate_card_content(player_stats, story_mode)
+    try:
+        result = generate_card_content(player_stats, story_mode)
 
-    if result:
-        return result
+        if result:
+            return result
+    except Exception as e:
+        # Re-raise rate limit errors so they can be handled by the caller
+        if "RATE_LIMIT_ERROR" in str(e):
+            raise
+        # For other errors, fall through to fallback content
+        print(f"AI generation error, using fallback content: {e}")
 
     # Fallback to default based on stats
     print("AI generation failed, using fallback content")

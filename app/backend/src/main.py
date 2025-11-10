@@ -558,6 +558,20 @@ def generate_zone_story_endpoint(riot_id, zone_id):
             if zone_stats and isinstance(zone_stats, dict) and len(zone_stats) > 2:  # More than just zone_id and zone_name
                 print(f"  Generating story using cached stats (fast: ~1-2s)")
                 print(f"  Stats keys: {list(zone_stats.keys())}")
+
+                # For lane zones, verify there's actual lane_performance data
+                if zone_id in ['top_lane', 'mid_lane', 'bot_lane']:
+                    lane_perf = zone_stats.get('lane_performance', {})
+                    matches_in_role = zone_stats.get('matches_played_in_role', 0)
+
+                    if not lane_perf or matches_in_role == 0:
+                        print(f"  WARNING: No lane performance data for {zone_id}")
+                        return jsonify({
+                            'error': f'Not enough data for {zone_stats.get("zone_name", zone_id)}. You haven\'t played enough matches in this lane recently. Try exploring other zones or play more games!',
+                            'zone_id': zone_id,
+                            'error_type': 'no_data'
+                        }), 404
+
                 from API.story.story_generator import generate_zone_story
 
                 try:
@@ -596,12 +610,13 @@ def generate_zone_story_endpoint(riot_id, zone_id):
                         'generated_at': int(time.time())
                     }), 200
                 else:
-                    # AI generation failed - return error
-                    print(f"  ERROR: AI failed to generate story for {zone_id}")
+                    # AI generation returned None - likely insufficient data
+                    print(f"  ERROR: Story generation returned None for {zone_id}")
                     return jsonify({
-                        'error': f'AI story generation failed for zone {zone_id}. Please try again.',
-                        'zone_id': zone_id
-                    }), 500
+                        'error': f'Not enough data for {zone_stats.get("zone_name", zone_id)}. You haven\'t played enough matches in this area recently. Try exploring other zones or play more games!',
+                        'zone_id': zone_id,
+                        'error_type': 'no_data'
+                    }), 404
             else:
                 # Stats are empty or invalid - fall through to fetch from API
                 print(f"  WARNING: Stats are empty or invalid for {zone_id}, will fetch from Riot API")
@@ -682,6 +697,15 @@ def generate_zone_story_endpoint(riot_id, zone_id):
                     'zone_id': zone_id,
                     'retry_after': 10
                 }), 429
+
+            # Check if it's a "no data" error
+            if "No statistics available" in error or "not have enough data" in error:
+                return jsonify({
+                    'error': error,
+                    'zone_id': zone_id,
+                    'error_type': 'no_data'
+                }), 404
+
             return jsonify({'error': error}), 500
 
         return jsonify(result), 200
@@ -926,248 +950,6 @@ def generate_card(riot_id):
         print(f"Error generating card: {e}")
         traceback.print_exc()
         return jsonify({'error': 'Internal server error'}), 500
-
-
-@app.route('/api/matches', methods=['POST'])
-def get_matches():
-    """
-    Fetch player match history
-
-    Request body:
-    {
-        "session_token": "uuid-token"
-    }
-
-    Response:
-    {
-        "matches": [
-            {
-                "match_id": "...",
-                "result": "win" or "loss",
-                "champion": "Champion Name",
-                "championIcon": "🦊",
-                "kda": "12/3/8",
-                "cs": "245",
-                "duration": "32:15",
-                "role": "Mid",
-                "timeAgo": "2 hours ago",
-                "timestamp": 1234567890
-            }
-        ]
-    }
-    """
-    try:
-        data = request.get_json()
-
-        if not data:
-            return jsonify({'error': 'Invalid JSON'}), 400
-
-        session_token = data.get('session_token')
-
-        if not session_token:
-            return jsonify({'error': 'session_token is required'}), 400
-
-        # Validate session token
-        puuid = session_repo.get_puuid_from_session(session_token)
-
-        if not puuid:
-            return jsonify({'error': 'Invalid or expired session'}), 401
-
-        # Fetch matches from DynamoDB
-        from db.src.repositories.match_repository import MatchRepository
-        match_repo = MatchRepository(dynamodb)
-
-        matches = match_repo.get_recent_matches(puuid, count=20)
-
-        if not matches:
-            return jsonify({'matches': []}), 200
-
-        # Format matches for frontend
-        formatted_matches = []
-        for match in matches:
-            match_data = match.match_data
-
-            # Convert Decimals to int/float for JSON serialization
-            from decimal import Decimal
-            def decimal_to_number(obj):
-                if isinstance(obj, list):
-                    return [decimal_to_number(item) for item in obj]
-                elif isinstance(obj, dict):
-                    return {key: decimal_to_number(value) for key, value in obj.items()}
-                elif isinstance(obj, Decimal):
-                    return int(obj) if obj % 1 == 0 else float(obj)
-                else:
-                    return obj
-
-            match_data = decimal_to_number(match_data)
-
-            info = match_data.get('info', {})
-            participants = info.get('participants', [])
-
-            # Find this player's data
-            player_data = next((p for p in participants if p.get('puuid') == puuid), None)
-
-            if not player_data:
-                continue
-
-            # Extract match details
-            champion_name = player_data.get('championName', 'Unknown')
-            kills = int(player_data.get('kills', 0))
-            deaths = int(player_data.get('deaths', 0))
-            assists = int(player_data.get('assists', 0))
-            cs = int(player_data.get('totalMinionsKilled', 0)) + int(player_data.get('neutralMinionsKilled', 0))
-            win = player_data.get('win', False)
-            role = player_data.get('teamPosition', 'UTILITY')
-            game_duration = info.get('gameDuration', 0)
-
-            # Format duration as MM:SS
-            minutes = game_duration // 60
-            seconds = game_duration % 60
-            duration_str = f"{minutes}:{seconds:02d}"
-
-            # Format time ago
-            import time
-            current_time = int(time.time())
-            time_diff = current_time - match.timestamp
-
-            if time_diff < 3600:
-                time_ago = f"{time_diff // 60} minutes ago"
-            elif time_diff < 86400:
-                time_ago = f"{time_diff // 3600} hours ago"
-            else:
-                time_ago = f"{time_diff // 86400} days ago"
-
-            # Map role names
-            role_map = {
-                'TOP': 'Top',
-                'JUNGLE': 'Jungle',
-                'MIDDLE': 'Mid',
-                'BOTTOM': 'ADC',
-                'UTILITY': 'Support'
-            }
-            role_display = role_map.get(role, role)
-
-            # Get champion emoji (basic mapping)
-            champion_emoji = get_champion_emoji(champion_name)
-
-            formatted_matches.append({
-                'match_id': match.match_id,
-                'result': 'win' if win else 'loss',
-                'champion': champion_name,
-                'championIcon': champion_emoji,
-                'kda': f"{kills}/{deaths}/{assists}",
-                'cs': str(cs),
-                'duration': duration_str,
-                'role': role_display,
-                'timeAgo': time_ago,
-                'timestamp': match.timestamp
-            })
-
-        return jsonify({'matches': formatted_matches}), 200
-
-    except Exception as e:
-        print(f"Error in /api/matches: {e}")
-        traceback.print_exc()
-        return jsonify({'error': 'Internal server error'}), 500
-
-
-def get_champion_emoji(champion_name):
-    """Get an emoji for a champion (basic mapping)"""
-    emoji_map = {
-        'Ahri': '🦊',
-        'Yasuo': '⚔️',
-        'Zed': '🥷',
-        'Jinx': '💣',
-        'Vayne': '🏹',
-        'Lee Sin': '🥋',
-        'Teemo': '🍄',
-        'Lux': '✨',
-        'Ezreal': '🎯',
-        'Darius': '🪓',
-        'Garen': '⚔️',
-        'Miss Fortune': '💰',
-        'Ashe': '❄️',
-        'Thresh': '⛓️',
-        'Blitzcrank': '🤖',
-        'Annie': '🔥',
-        'Malphite': '🪨',
-        'Master Yi': '⚡',
-        'Katarina': '🗡️',
-        'Akali': '🌙',
-        'Caitlyn': '🎯',
-        'Jhin': '🎭',
-        'Draven': '🪓',
-        'Lucian': '🔫',
-        'Viktor': '⚡',
-        'Syndra': '🔮',
-        'Xerath': '⚡',
-        'Brand': '🔥',
-        'Nami': '🌊',
-        'Janna': '💨',
-        'Sona': '🎵',
-        'Soraka': '⭐',
-        'Leona': '☀️',
-        'Diana': '🌙',
-        'Kayn': '👿',
-        'Aatrox': '😈',
-        'Riven': '⚔️',
-        'Fiora': '🤺',
-        'Irelia': '💃',
-        'Camille': '🦿',
-        'Jax': '🪨',
-        'Nasus': '🐕',
-        'Renekton': '🐊',
-        'Vladimir': '🩸',
-        'Fizz': '🐟',
-        'Ekko': '⏰',
-        'Twisted Fate': '🃏',
-        'Veigar': '🧙',
-        'Kassadin': '🌌',
-        'Kayle': '😇',
-        'Morgana': '😈',
-        'Swain': '🦅',
-        'Azir': '🏜️',
-        'Orianna': '⚙️',
-        'Zilean': '⏰',
-        'Bard': '🎵',
-        'Ivern': '🌳',
-        'Pyke': '🔪',
-        'Nautilus': '⚓',
-        'Alistar': '🐂',
-        'Braum': '🛡️',
-        'Taric': '💎',
-        'Shen': '🥷',
-        'Rammus': '🦔',
-        'Shaco': '🤡',
-        'Kindred': '🐺',
-        'Elise': '🕷️',
-        'Nidalee': '🐆',
-        'Rengar': '🦁',
-        'Kha\'Zix': '🦗',
-        'Rek\'Sai': '🦈',
-        'Vi': '👊',
-        'Sett': '👊',
-        'Viego': '👑',
-        'Gwen': '✂️',
-        'Akshan': '🪃',
-        'Samira': '🔫',
-        'Aphelios': '🌙',
-        'Senna': '🔫',
-        'Seraphine': '🎤',
-        'Yone': '👹',
-        'Lillia': '🦌',
-        'Rell': '🐴',
-        'Vex': '😑',
-        'Zeri': '⚡',
-        'Renata Glasc': '⚗️',
-        'K\'Sante': '🛡️',
-        'Milio': '🔥',
-        'Naafiri': '🐕',
-        'Briar': '🩸',
-        'Hwei': '🎨',
-        'Smolder': '🐉',
-    }
-    return emoji_map.get(champion_name, '⚔️')
 
 
 @app.route('/api/coach', methods=['POST'])
