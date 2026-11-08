@@ -3,7 +3,7 @@
 > Personalized AI coaching with interactive map analysis and persistent conversation memory
 
 **Hackathon:** [Rift Rewind - AWS x Riot Games](https://riftrewind.devpost.com/)
-**Hackathon:** [Our Submission]([https://riftrewind.devpost.com/](https://devpost.com/software/jinx-s-workshop))
+**Submission:** [Jinx's Magical Rewind Machine](https://devpost.com/software/jinx-s-workshop/)
 **Live Demo:** [http://riftrewind-production.eba-enkdvi6d.eu-west-3.elasticbeanstalk.com/](http://riftrewind-production.eba-enkdvi6d.eu-west-3.elasticbeanstalk.com/)
 
 ## Team
